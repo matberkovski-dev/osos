@@ -1,0 +1,3330 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>КонтурОС</title>
+</head>
+<body style="margin:0;padding:0;background:#000">
+<!--
+  ╔══════════════════════════════════════════════════════════════════╗
+  ║  КонтурОС v1.0.0 — Desktop OS Simulator for Raspberry Pi 5    ║
+  ║  Safari-compatible · Bilingual (RU/EN)                          ║
+  ║                                                                  ║
+  ║  XCODE PORTING NOTES:                                           ║
+  ║  This HTML/JS architecture maps to native macOS as follows:     ║
+  ║  ┌─ CSS themes     → NSAppearance + Asset Catalogs              ║
+  ║  ├─ Window Manager → NSWindowController + NSWindow              ║
+  ║  ├─ Dock           → custom NSView with NSCollectionView        ║
+  ║  ├─ Menu Bar       → NSMenu + NSMenuItem (native)               ║
+  ║  ├─ File System    → FileManager + sandbox containers           ║
+  ║  ├─ Settings       → SwiftUI Settings scene                     ║
+  ║  ├─ i18n           → Localizable.strings + String catalogs      ║
+  ║  ├─ Apps           → NSViewController subclasses                ║
+  ║  └─ AI Monitor     → URLSession + Codable for Anthropic API    ║
+  ║                                                                  ║
+  ║  Texture fallback: external files in assets/ folder are          ║
+  ║  optional; all visuals have inline SVG/CSS gradient fallbacks.  ║
+  ║  For Xcode: move to .xcassets image sets.                       ║
+  ╚══════════════════════════════════════════════════════════════════╝
+-->
+<style>
+/* ══════════════════════════════════════════════════════════════
+   1. CSS VARIABLES & THEME
+   All colors and fonts centralized for easy Xcode porting.
+   In Xcode: these become NSColor constants or Asset Catalog colors.
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  /* Fonts — Xcode: use system fonts via NSFont.systemFont */
+  --ui: -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  --mono: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+
+  /* Core palette */
+  --bg-deep:    #090c17;
+  --bg-panel:   #13172a;
+  --bg-titlebar:#1a1e30;
+  --bg-card:    #0d1020;
+  --bg-hover:   rgba(255,255,255,0.07);
+  --bg-input:   rgba(255,255,255,0.07);
+  --border:     rgba(255,255,255,0.1);
+  --border-subtle: rgba(255,255,255,0.06);
+
+  /* Text */
+  --text-primary:   #fff;
+  --text-secondary: rgba(255,255,255,0.78);
+  --text-tertiary:  rgba(255,255,255,0.48);
+  --text-muted:     rgba(255,255,255,0.28);
+
+  /* Accent colors */
+  --accent:     #3b82f6;
+  --accent-dim: rgba(59,130,246,0.22);
+  --green:      #34d399;
+  --red:        #f87171;
+  --yellow:     #fbbf24;
+  --purple:     #a78bfa;
+  --cyan:       #22d3ee;
+  --orange:     #fb923c;
+
+  /* Dock */
+  --dock-bg:    rgba(14,18,32,0.88);
+
+  /* Dimensions */
+  --menubar-h:  26px;
+  --dock-h:     80px;
+  --os-h:       100vh;
+}
+
+/* ── Reset ─────────────────────────────────────────────────── */
+* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #090c17; }
+
+/* ── OS Container ──────────────────────────────────────────── */
+#os {
+  width: 100%; height: 100vh;
+  background: var(--bg-deep);
+  font-family: var(--ui);
+  position: relative; overflow: hidden;
+  border-radius: 0;
+}
+#wallpaper {
+  position: absolute; inset: 0;
+  background: linear-gradient(135deg, #090c17, #0d1225);
+  transition: background 0.4s;
+}
+/* Colored orbs behind glass — makes refraction visible */
+#wallpaper::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 300px 300px at 15% 80%, rgba(59,130,246,0.15), transparent),
+    radial-gradient(ellipse 250px 250px at 75% 20%, rgba(168,85,247,0.12), transparent),
+    radial-gradient(ellipse 200px 200px at 50% 60%, rgba(52,211,153,0.08), transparent),
+    radial-gradient(ellipse 280px 280px at 85% 75%, rgba(248,113,113,0.08), transparent);
+  pointer-events: none;
+}
+.star { position: absolute; border-radius: 50%; background: rgba(255,255,255,0.55); }
+/* ── Light Theme ───────────────────────────────────────────── */
+#os.light-theme {
+  --bg-deep: #e8eaf0;
+  --bg-panel: #f0f1f5;
+  --bg-titlebar: #dddfe6;
+  --bg-card: #ffffff;
+  --bg-hover: rgba(0,0,0,0.05);
+  --bg-input: rgba(0,0,0,0.04);
+  --border: rgba(0,0,0,0.1);
+  --border-subtle: rgba(0,0,0,0.06);
+  --text-primary: #1a1a2e;
+  --text-secondary: rgba(0,0,0,0.75);
+  --text-tertiary: rgba(0,0,0,0.45);
+  --text-muted: rgba(0,0,0,0.28);
+  --dock-bg: rgba(240,241,245,0.75);
+}
+#os.light-theme #wallpaper { opacity: 0.15; }
+#os.light-theme #menubar { background: rgba(232,234,240,0.7) !important; }
+#os.light-theme #dockbar { background: rgba(240,241,245,0.65) !important; border-color: rgba(0,0,0,0.08); }
+#os.light-theme .win { background: var(--bg-panel); }
+#os.light-theme .win-titlebar { background: rgba(221,223,230,0.75) !important; }
+#os.light-theme .win-title { color: var(--text-tertiary); }
+#os.light-theme .icon-label { color: rgba(0,0,0,0.75); text-shadow: 0 1px 3px rgba(255,255,255,0.8); }
+#os.light-theme .dock-icon { background: rgba(0,0,0,0.04) !important; border-color: rgba(0,0,0,0.06); }
+#os.light-theme .dock-tip { background: rgba(240,241,245,0.85) !important; color: rgba(0,0,0,0.8); border-color: rgba(0,0,0,0.08); }
+#os.light-theme #notif-panel { background: rgba(240,241,245,0.8) !important; }
+#os.light-theme .ctx-menu { background: rgba(245,246,250,0.85) !important; }
+#os.light-theme .ctx-item { color: var(--text-secondary); }
+#os.light-theme .ctx-item:hover { background: var(--accent); color: #fff; }
+#os.light-theme .mb-dropdown { background: rgba(240,241,245,0.85) !important; }
+#os.light-theme .mdd-item { color: var(--text-secondary); }
+#os.light-theme .mb-item { color: var(--text-tertiary); }
+#os.light-theme .mb-item:hover, #os.light-theme .mb-item.active { color: var(--text-primary); background: rgba(0,0,0,0.06); }
+#os.light-theme .mb-status { color: var(--text-tertiary); }
+#os.light-theme .term-body { color: #166534; }
+#os.light-theme .term-input { color: #166534; caret-color: #166534; }
+#os.light-theme .s-sidebar { background: rgba(0,0,0,0.02); }
+#os.light-theme .s-sidebar-item { color: var(--text-tertiary); }
+#os.light-theme .s-sidebar-item.active { background: var(--accent-dim); color: var(--text-primary); }
+#os.light-theme .dialog-box { background: rgba(240,241,245,0.9) !important; }
+#os.light-theme .dialog-input { background: #fff; color: var(--text-primary); }
+#os.light-theme .smon-card, #os.light-theme .graph-wrap, #os.light-theme .ai-bubble, #os.light-theme .update-card, #os.light-theme .calc-display { background: rgba(255,255,255,0.7) !important; border-color: rgba(0,0,0,0.06); }
+#os.light-theme .browser-bar { background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.06); }
+#os.light-theme .browser-url { background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.08); color: var(--text-primary); }
+#os.light-theme .file-row:hover { background: rgba(0,0,0,0.04); }
+#os.light-theme .file-row.selected { background: var(--accent-dim); }
+#os.light-theme .files-btn { background: rgba(0,0,0,0.05); color: var(--text-tertiary); }
+#os.light-theme .star { display: none; }
+#os.light-theme .lr-item:hover, #os.light-theme .lr-item.selected { background: var(--accent-dim); }
+#os.light-theme #launcher { background: rgba(230,232,240,0.92); }
+#os.light-theme #launcher-input-wrap { background: rgba(0,0,0,0.05) !important; border-color: rgba(0,0,0,0.1); }
+#os.light-theme #launcher-input { color: var(--text-primary); }
+
+/* ── Accessibility: High Contrast ──────────────────────────── */
+#os.high-contrast { --border: rgba(255,255,255,0.3); --text-secondary: #fff; --text-tertiary: rgba(255,255,255,0.8); --text-muted: rgba(255,255,255,0.55); }
+#os.high-contrast .win { border-width: 1.5px !important; }
+#os.high-contrast .mb-item, #os.high-contrast .mb-status { color: rgba(255,255,255,0.85); }
+#os.high-contrast.light-theme { --border: rgba(0,0,0,0.3); --text-secondary: #000; --text-tertiary: rgba(0,0,0,0.75); --text-muted: rgba(0,0,0,0.5); }
+
+/* ── Accessibility: Reduce Motion ──────────────────────────── */
+#os.reduce-motion, #os.reduce-motion * { transition: none !important; animation: none !important; }
+
+
+/* ── Menu Bar ──────────────────────────────────────────────── */
+#menubar {
+  position: absolute; top: 0; left: 0; right: 0;
+  height: var(--menubar-h);
+  background: rgba(9,12,23,0.95);
+  border-bottom: 0.5px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 14px; z-index: 500;
+}
+.mb-left { display: flex; align-items: center; gap: 14px; }
+.mb-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.mb-logo { width: 16px; height: 16px; cursor: pointer; }
+.mb-item {
+  font-size: 12px; color: var(--text-tertiary); cursor: pointer;
+  font-weight: 400; letter-spacing: 0.01em; font-family: var(--ui);
+  padding: 2px 6px; border-radius: 4px; position: relative;
+}
+.mb-item:hover, .mb-item.active { color: var(--text-primary); background: rgba(255,255,255,0.08); }
+.mb-status {
+  font-size: 11px; color: var(--text-tertiary); cursor: pointer;
+  display: flex; align-items: center; font-family: var(--ui);
+}
+.mb-status:hover { color: rgba(255,255,255,0.85); }
+
+/* Menu bar dropdown */
+.mb-dropdown {
+  position: absolute; top: 22px; left: 0;
+  background: var(--bg-titlebar); border: 0.5px solid var(--border);
+  border-radius: 8px; padding: 4px; min-width: 180px;
+  z-index: 550; display: none;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+}
+.mb-dropdown.show { display: block; }
+.mdd-item {
+  font-size: 12px; color: var(--text-secondary); padding: 6px 12px;
+  border-radius: 5px; cursor: pointer; font-family: var(--ui);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.mdd-item:hover { background: var(--accent); color: #fff; }
+.mdd-item .shortcut { font-size: 10px; color: var(--text-muted); }
+.mdd-item:hover .shortcut { color: rgba(255,255,255,0.6); }
+.mdd-sep { height: 0.5px; background: var(--border); margin: 3px 0; }
+.mdd-item.disabled { opacity: 0.35; pointer-events: none; }
+
+/* ── Desktop ───────────────────────────────────────────────── */
+#desktop {
+  position: absolute;
+  top: var(--menubar-h); left: 0; right: 0;
+  bottom: var(--dock-h);
+}
+.desk-icon {
+  position: absolute; display: flex; flex-direction: column;
+  align-items: center; gap: 5px; padding: 8px;
+  border-radius: 10px; cursor: pointer; width: 74px;
+}
+.desk-icon:hover { background: var(--bg-hover); }
+.icon-box {
+  width: 46px; height: 46px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.icon-label {
+  font-size: 11px; color: rgba(255,255,255,0.82); text-align: center;
+  line-height: 1.3; text-shadow: 0 1px 5px rgba(0,0,0,1);
+  font-family: var(--ui); font-weight: 400;
+}
+
+/* ── Window System ─────────────────────────────────────────── */
+.win {
+  position: absolute; background: var(--bg-panel);
+  border-radius: 12px; border: 0.5px solid var(--border);
+  overflow: hidden; display: flex; flex-direction: column;
+  min-width: 280px; min-height: 160px;
+  transition: opacity 0.15s, transform 0.15s;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+}
+.win.opening { opacity: 0; transform: scale(0.93); }
+.win.closing { opacity: 0; transform: scale(0.93); }
+.win-titlebar {
+  height: 36px; background: var(--bg-titlebar);
+  display: flex; align-items: center; padding: 0 12px; gap: 8px;
+  border-bottom: 0.5px solid var(--border-subtle);
+  cursor: move; flex-shrink: 0;
+}
+.win-lights { display: flex; gap: 6px; }
+.wl { width: 11px; height: 11px; border-radius: 50%; cursor: pointer; flex-shrink: 0; }
+.wl-close { background: #ff5f57; }
+.wl-min   { background: #febc2e; }
+.wl-max   { background: #28c840; }
+.wl:hover { filter: brightness(1.3); }
+.win-title {
+  font-size: 12px; color: var(--text-muted); margin-left: 6px;
+  font-family: var(--ui); font-weight: 400;
+}
+.win-body {
+  flex: 1; overflow: auto; padding: 14px;
+}
+.win-body::-webkit-scrollbar { width: 4px; }
+.win-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+/* ── Dock ──────────────────────────────────────────────────── */
+#dock {
+  position: absolute; bottom: 12px; left: 50%;
+  transform: translateX(-50%); z-index: 300;
+}
+#dockbar {
+  background: var(--dock-bg);
+  border: 0.5px solid rgba(255,255,255,0.11);
+  border-radius: 20px; padding: 9px 14px;
+  display: flex; align-items: flex-end; gap: 6px;
+}
+.dock-icon {
+  width: 50px; height: 50px; border-radius: 13px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; position: relative; transition: transform 0.12s ease;
+}
+.dock-icon:hover { transform: translateY(-12px) scale(1.2); }
+.dock-icon.neighbor { transform: translateY(-7px) scale(1.1); }
+.dock-icon:hover .dock-tip { opacity: 1; }
+.dock-icon.running::after {
+  content: ''; position: absolute; bottom: -7px; left: 50%;
+  transform: translateX(-50%); width: 4px; height: 4px;
+  border-radius: 50%; background: rgba(255,255,255,0.4);
+}
+.dock-tip {
+  position: absolute; bottom: calc(100% + 10px); left: 50%;
+  transform: translateX(-50%); background: var(--bg-titlebar);
+  color: rgba(255,255,255,0.88); font-size: 11px; font-family: var(--ui);
+  padding: 4px 10px; border-radius: 6px; pointer-events: none;
+  opacity: 0; white-space: nowrap; border: 0.5px solid var(--border);
+}
+.dock-div {
+  width: 0.5px; height: 38px; background: var(--border);
+  margin: 0 2px; align-self: center;
+}
+
+/* ── Launcher ──────────────────────────────────────────────── */
+#launcher {
+  position: absolute; inset: 0; z-index: 400;
+  background: rgba(6,9,18,0.92); display: none;
+  align-items: flex-start; justify-content: center; padding-top: 90px;
+}
+#launcher.show { display: flex; }
+#launcher-box { width: 520px; }
+#launcher-input-wrap {
+  background: var(--bg-input);
+  border: 0.5px solid rgba(255,255,255,0.15);
+  border-radius: 14px; display: flex; align-items: center;
+  padding: 0 16px; gap: 10px;
+}
+#launcher-input {
+  flex: 1; background: none; border: none; outline: none;
+  color: #fff; font-size: 17px; font-family: var(--ui);
+  font-weight: 300; padding: 13px 0;
+}
+#launcher-input::placeholder { color: rgba(255,255,255,0.2); }
+#launcher-results { margin-top: 10px; display: flex; flex-direction: column; gap: 1px; }
+.lr-item {
+  display: flex; align-items: center; gap: 12px; padding: 9px 12px;
+  border-radius: 10px; cursor: pointer;
+}
+.lr-item:hover, .lr-item.selected { background: var(--accent-dim); }
+.lr-icon {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.lr-name { font-size: 13px; color: rgba(255,255,255,0.88); font-family: var(--ui); font-weight: 400; }
+.lr-sub { font-size: 11px; color: var(--text-muted); margin-left: auto; font-family: var(--ui); }
+
+/* ── Notification Panel ────────────────────────────────────── */
+#notif-panel {
+  position: absolute; top: 30px; right: 10px; z-index: 450;
+  background: var(--bg-titlebar); border: 0.5px solid var(--border);
+  border-radius: 14px; padding: 14px; width: 280px;
+  display: none; flex-direction: column; gap: 10px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+}
+#notif-panel.show { display: flex; }
+.notif-item { display: flex; gap: 9px; align-items: flex-start; }
+.notif-icon {
+  width: 30px; height: 30px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.notif-text { font-size: 12px; color: rgba(255,255,255,0.7); line-height: 1.5; font-family: var(--ui); }
+.notif-time { font-size: 10px; color: var(--text-muted); margin-top: 2px; font-family: var(--ui); }
+
+/* ── Context Menu ──────────────────────────────────────────── */
+.ctx-menu {
+  position: absolute; background: #1c2030;
+  border: 0.5px solid var(--border); border-radius: 10px;
+  padding: 4px; z-index: 600; min-width: 180px; display: none;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+}
+.ctx-menu.show { display: block; }
+.ctx-item {
+  font-size: 13px; color: var(--text-secondary); padding: 7px 12px;
+  border-radius: 7px; cursor: pointer; font-family: var(--ui);
+}
+.ctx-item:hover { background: var(--accent); color: #fff; }
+.ctx-sep { height: 0.5px; background: rgba(255,255,255,0.08); margin: 3px 0; }
+
+/* ══════════════════════════════════════════════════════════════
+   APP-SPECIFIC STYLES
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── Settings ──────────────────────────────────────────────── */
+.s-sidebar {
+  display: flex; flex-direction: column; gap: 1px;
+  width: 140px; border-right: 0.5px solid var(--border-subtle);
+  padding: 8px; flex-shrink: 0; overflow-y: auto;
+}
+.s-sidebar-item {
+  font-size: 12px; color: var(--text-tertiary); padding: 7px 10px;
+  border-radius: 8px; cursor: pointer; font-family: var(--ui);
+  display: flex; align-items: center; gap: 8px;
+}
+.s-sidebar-item:hover { background: var(--bg-hover); color: var(--text-secondary); }
+.s-sidebar-item.active { background: var(--accent-dim); color: var(--text-primary); }
+.s-content { flex: 1; padding: 14px; overflow-y: auto; }
+.s-section {
+  font-size: 10px; color: var(--text-muted); padding: 10px 0 4px;
+  text-transform: uppercase; letter-spacing: .07em;
+  font-family: var(--ui); font-weight: 600;
+}
+.s-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 0; cursor: pointer; border-radius: 8px;
+}
+.s-row:hover { background: rgba(255,255,255,0.03); }
+.s-label { font-size: 13px; color: var(--text-secondary); font-family: var(--ui); }
+.s-value { font-size: 12px; color: var(--text-muted); font-family: var(--ui); }
+.s-toggle {
+  width: 34px; height: 20px; border-radius: 10px;
+  position: relative; cursor: pointer; flex-shrink: 0;
+  transition: background 0.18s;
+}
+.s-toggle.on { background: var(--accent); }
+.s-toggle.off { background: rgba(255,255,255,0.14); }
+.s-knob {
+  position: absolute; top: 3px; width: 14px; height: 14px;
+  border-radius: 50%; background: #fff; transition: left 0.18s;
+}
+.s-toggle.on .s-knob { left: 17px; }
+.s-toggle.off .s-knob { left: 3px; }
+.s-slider-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.s-slider-row input[type=range] {
+  flex: 1; -webkit-appearance: none; height: 4px;
+  border-radius: 2px; background: rgba(255,255,255,0.12); outline: none;
+}
+.s-slider-row input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--accent); cursor: pointer;
+}
+.s-slider-val {
+  font-size: 11px; color: var(--text-muted); min-width: 32px;
+  text-align: right; font-family: var(--ui);
+}
+
+/* Settings: update card */
+.update-card {
+  background: var(--bg-card); border-radius: 10px; padding: 16px;
+  margin-top: 8px;
+}
+.update-btn {
+  background: var(--accent); color: #fff; border: none;
+  border-radius: 8px; padding: 8px 18px; font-size: 13px;
+  font-family: var(--ui); cursor: pointer; margin-top: 10px;
+}
+.update-btn:hover { filter: brightness(1.15); }
+.update-btn:active { opacity: 0.8; }
+.update-btn.checking { background: rgba(255,255,255,0.1); color: var(--text-tertiary); }
+.update-progress {
+  height: 4px; border-radius: 2px; background: rgba(255,255,255,0.08);
+  margin-top: 10px; overflow: hidden;
+}
+.update-progress-fill {
+  height: 100%; border-radius: 2px; background: var(--accent);
+  transition: width 0.3s; width: 0%;
+}
+/* Accent color picker */
+.accent-grid {
+  display: flex; gap: 8px; padding: 6px 0; flex-wrap: wrap;
+}
+.accent-swatch {
+  width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+  border: 2px solid transparent; transition: border-color 0.15s;
+}
+.accent-swatch.active { border-color: #fff; }
+.accent-swatch:hover { transform: scale(1.15); }
+
+/* Storage bars */
+.storage-bar {
+  height: 20px; border-radius: 10px; background: rgba(255,255,255,0.06);
+  overflow: hidden; display: flex; margin: 6px 0;
+}
+.storage-seg { height: 100%; transition: width 0.4s; }
+
+/* ── Terminal ──────────────────────────────────────────────── */
+.term-body {
+  font-family: var(--mono); font-size: 12px; line-height: 1.8;
+  color: #4ade80; white-space: pre-wrap; word-break: break-all;
+  min-height: 160px;
+}
+.term-prompt { color: var(--text-muted); font-family: var(--mono); }
+.term-input {
+  flex: 1; background: none; border: none; outline: none;
+  font-family: var(--mono); font-size: 12px; color: #4ade80; caret-color: #4ade80;
+}
+
+/* ── Files ─────────────────────────────────────────────────── */
+.files-toolbar {
+  display: flex; align-items: center; gap: 6px; padding: 0 0 10px;
+  border-bottom: 0.5px solid var(--border-subtle); margin-bottom: 8px;
+}
+.files-btn {
+  background: rgba(255,255,255,0.06); border: none; color: var(--text-tertiary);
+  font-size: 11px; padding: 5px 10px; border-radius: 6px;
+  cursor: pointer; font-family: var(--ui); display: flex; align-items: center; gap: 4px;
+}
+.files-btn:hover { background: rgba(255,255,255,0.1); color: var(--text-secondary); }
+.file-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: 8px; cursor: pointer;
+}
+.file-row:hover { background: var(--bg-hover); }
+.file-row.selected { background: var(--accent-dim); }
+.file-name { font-size: 13px; color: var(--text-secondary); font-family: var(--ui); }
+.file-meta { font-size: 11px; color: var(--text-muted); margin-left: auto; font-family: var(--ui); }
+.file-path {
+  font-size: 11px; color: var(--text-muted); padding: 4px 0 10px;
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  font-family: var(--ui);
+}
+.fp-btn {
+  cursor: pointer; color: rgba(255,255,255,0.5); padding: 2px 5px; border-radius: 5px;
+}
+.fp-btn:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.85); }
+
+/* File editor */
+.file-editor {
+  width: 100%; min-height: 150px; background: var(--bg-card);
+  border: 0.5px solid var(--border); border-radius: 8px;
+  color: var(--text-secondary); font-family: var(--mono); font-size: 12px;
+  padding: 10px; outline: none; resize: vertical; line-height: 1.6;
+}
+
+/* ── Calculator ────────────────────────────────────────────── */
+.calc-btn {
+  width: 52px; height: 44px; border-radius: 9px; border: none;
+  cursor: pointer; font-size: 15px; font-family: var(--ui); font-weight: 400;
+  -webkit-appearance: none; display: flex; align-items: center; justify-content: center;
+}
+.calc-btn:active { opacity: 0.7; }
+.calc-display {
+  background: var(--bg-card); border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 10px; text-align: right;
+}
+.calc-main { font-size: 30px; color: #fff; font-weight: 300; font-family: var(--ui); letter-spacing: -0.5px; }
+.calc-sub { font-size: 12px; color: var(--text-muted); min-height: 16px; font-family: var(--ui); }
+
+/* ── Clock ─────────────────────────────────────────────────── */
+.clock-big {
+  font-size: 50px; font-weight: 200; color: #fff;
+  letter-spacing: -2px; font-family: var(--ui);
+}
+.clock-date {
+  font-size: 13px; color: var(--text-tertiary); margin-top: 4px; font-family: var(--ui);
+}
+
+/* ── System Monitor ────────────────────────────────────────── */
+.smon-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.smon-card { background: var(--bg-card); border-radius: 10px; padding: 12px; }
+.smon-label {
+  font-size: 10px; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .07em; font-family: var(--ui); font-weight: 600; margin-bottom: 4px;
+}
+.smon-val { font-size: 20px; color: #fff; font-weight: 300; font-family: var(--ui); }
+.smon-sub { font-size: 10px; color: var(--text-muted); font-family: var(--ui); margin-top: 2px; }
+.smon-bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.08); margin-top: 6px; overflow: hidden; }
+.smon-bar-fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
+.ai-bubble { background: var(--bg-card); border-radius: 10px; padding: 12px; margin-bottom: 8px; font-size: 12px; color: rgba(255,255,255,0.7); line-height: 1.6; font-family: var(--ui); }
+.ai-label { font-size: 10px; color: var(--accent); text-transform: uppercase; letter-spacing: .07em; font-weight: 600; margin-bottom: 6px; font-family: var(--ui); }
+.ai-spin { display: inline-block; width: 10px; height: 10px; border: 1.5px solid rgba(255,255,255,0.15); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; margin-right: 6px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.graph-wrap { background: var(--bg-card); border-radius: 10px; padding: 10px 12px; }
+.graph-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .07em; font-family: var(--ui); margin-bottom: 6px; }
+
+/* ══════════════════════════════════════════════════════════════
+   LIQUID GLASS — Apple WWDC 2025 style
+   Thick translucent glass with visible refraction, specular
+   highlights, chromatic edge, and depth.
+   ══════════════════════════════════════════════════════════════ */
+
+/* SVG distortion filter for glass refraction */
+svg#glass-filters { position: absolute; width: 0; height: 0; }
+
+/* Animated specular light sweep */
+@keyframes glassShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes glassGlow {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+
+/* ── MENU BAR — thick frosted glass bar ───────────────────── */
+#menubar {
+  background: rgba(20, 24, 45, 0.3) !important;
+  backdrop-filter: blur(50px) saturate(250%) brightness(1.1);
+  -webkit-backdrop-filter: blur(50px) saturate(250%) brightness(1.1);
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.1) inset,
+    0 -1px 0 rgba(255,255,255,0.03) inset,
+    0 2px 20px rgba(0,0,0,0.2);
+}
+/* Specular shimmer line on menubar */
+#menubar::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(255,255,255,0.01) 20%,
+    rgba(255,255,255,0.25) 45%,
+    rgba(255,255,255,0.35) 50%,
+    rgba(255,255,255,0.25) 55%,
+    rgba(255,255,255,0.01) 80%,
+    transparent 100%);
+  background-size: 200% 100%;
+  animation: glassShimmer 8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* ── DOCK — glass pill with visible depth ─────────────────── */
+#dockbar {
+  background: rgba(20, 24, 45, 0.25) !important;
+  backdrop-filter: blur(60px) saturate(280%) brightness(1.1);
+  -webkit-backdrop-filter: blur(60px) saturate(280%) brightness(1.1);
+  border: 1px solid rgba(255,255,255,0.2) !important;
+  border-radius: 22px;
+  box-shadow:
+    0 0.5px 0 rgba(255,255,255,0.2) inset,
+    0 -0.5px 0 rgba(255,255,255,0.05) inset,
+    0 0 0 0.5px rgba(255,255,255,0.05) inset,
+    0 12px 50px rgba(0,0,0,0.4),
+    0 2px 8px rgba(0,0,0,0.15);
+  position: relative;
+  overflow: visible;
+}
+/* Top specular highlight arc */
+#dockbar::before {
+  content: '';
+  position: absolute;
+  top: -1px; left: 15%; right: 15%; height: 2px;
+  background: radial-gradient(ellipse, rgba(255,255,255,0.4) 0%, transparent 70%);
+  border-radius: 2px;
+  pointer-events: none;
+}
+/* Bottom reflection */
+#dockbar::after {
+  content: '';
+  position: absolute;
+  bottom: -1px; left: 20%; right: 20%; height: 1px;
+  background: radial-gradient(ellipse, rgba(255,255,255,0.08) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+/* ── DOCK ICONS — individual glass pills ──────────────────── */
+.dock-icon {
+  background: rgba(255,255,255,0.07) !important;
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  border: 0.5px solid rgba(255,255,255,0.12) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.1) inset,
+    0 -1px 2px rgba(0,0,0,0.1) inset,
+    0 2px 8px rgba(0,0,0,0.1);
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s, background 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+.dock-icon::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 50%;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.12), transparent);
+  border-radius: 13px 13px 0 0;
+  pointer-events: none;
+}
+.dock-icon:hover {
+  background: rgba(255,255,255,0.15) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.2) inset,
+    0 -1px 2px rgba(0,0,0,0.15) inset,
+    0 8px 30px rgba(0,0,0,0.25),
+    0 0 20px rgba(100,160,255,0.08);
+}
+
+/* ── WINDOWS — glass panels with chromatic edge ───────────── */
+.win {
+  border: 1px solid rgba(255,255,255,0.13) !important;
+  border-radius: 14px;
+  box-shadow:
+    0 20px 60px rgba(0,0,0,0.45),
+    0 5px 15px rgba(0,0,0,0.2),
+    0 0 0 0.5px rgba(255,255,255,0.08) inset !important;
+  position: relative;
+}
+.win-titlebar {
+  background: rgba(20, 24, 44, 0.35) !important;
+  backdrop-filter: blur(50px) saturate(250%) brightness(1.1);
+  -webkit-backdrop-filter: blur(50px) saturate(250%) brightness(1.1);
+  border-bottom: 0.5px solid rgba(255,255,255,0.1);
+  position: relative;
+}
+/* Specular highlight on window titlebar */
+.win-titlebar::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 5%; right: 5%; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  pointer-events: none;
+}
+/* Window body — light glass tint */
+.win .win-body {
+  background: rgba(19, 23, 42, 0.75);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* ── NOTIFICATION PANEL — floating glass card ─────────────── */
+#notif-panel {
+  background: rgba(20, 24, 44, 0.3) !important;
+  backdrop-filter: blur(50px) saturate(250%) brightness(1.08);
+  -webkit-backdrop-filter: blur(50px) saturate(250%) brightness(1.08);
+  border: 1px solid rgba(255,255,255,0.18) !important;
+  box-shadow:
+    0 16px 50px rgba(0,0,0,0.4),
+    0 1px 0 rgba(255,255,255,0.12) inset;
+  position: relative;
+}
+#notif-panel::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 10%; right: 10%; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+/* ── CONTEXT MENU — glass dropdown ────────────────────────── */
+.ctx-menu {
+  background: rgba(20, 24, 44, 0.3) !important;
+  backdrop-filter: blur(50px) saturate(250%) brightness(1.1);
+  -webkit-backdrop-filter: blur(50px) saturate(250%) brightness(1.1);
+  border: 1px solid rgba(255,255,255,0.18) !important;
+  box-shadow:
+    0 16px 50px rgba(0,0,0,0.4),
+    0 1px 0 rgba(255,255,255,0.12) inset;
+}
+
+/* ── MENU DROPDOWNS — glass panels ────────────────────────── */
+.mb-dropdown {
+  background: rgba(20, 24, 44, 0.3) !important;
+  backdrop-filter: blur(50px) saturate(250%) brightness(1.1);
+  -webkit-backdrop-filter: blur(50px) saturate(250%) brightness(1.1);
+  border: 1px solid rgba(255,255,255,0.18) !important;
+  box-shadow:
+    0 12px 44px rgba(0,0,0,0.45),
+    0 1px 0 rgba(255,255,255,0.12) inset !important;
+}
+
+/* ── LAUNCHER — frosted glass search bar ──────────────────── */
+#launcher-input-wrap {
+  background: rgba(255,255,255,0.08) !important;
+  backdrop-filter: blur(30px) saturate(200%);
+  -webkit-backdrop-filter: blur(30px) saturate(200%);
+  border: 1px solid rgba(255,255,255,0.18) !important;
+  box-shadow:
+    0 8px 40px rgba(0,0,0,0.3),
+    0 1px 0 rgba(255,255,255,0.12) inset;
+}
+
+/* ── DIALOG — heavy glass modal ───────────────────────────── */
+.dialog-box {
+  background: rgba(20, 24, 44, 0.3) !important;
+  backdrop-filter: blur(60px) saturate(280%) brightness(1.1);
+  -webkit-backdrop-filter: blur(60px) saturate(280%) brightness(1.1);
+  border: 1px solid rgba(255,255,255,0.2) !important;
+  box-shadow:
+    0 24px 70px rgba(0,0,0,0.5),
+    0 1px 0 rgba(255,255,255,0.15) inset,
+    0 0 0 0.5px rgba(255,255,255,0.05) inset !important;
+  position: relative;
+}
+.dialog-box::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 8%; right: 8%; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+  pointer-events: none;
+  border-radius: 1px;
+}
+
+/* ── DOCK TOOLTIP — glass bubble ──────────────────────────── */
+.dock-tip {
+  background: rgba(20, 24, 44, 0.3) !important;
+  backdrop-filter: blur(30px) saturate(200%);
+  -webkit-backdrop-filter: blur(30px) saturate(200%);
+  border: 0.5px solid rgba(255,255,255,0.15) !important;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+
+/* ── GLASS CARDS (sysmon, calculator display, etc) ────────── */
+.smon-card, .graph-wrap, .ai-bubble, .update-card, .calc-display {
+  background: rgba(13, 16, 32, 0.35) !important;
+  backdrop-filter: blur(20px) saturate(200%) brightness(1.05);
+  -webkit-backdrop-filter: blur(20px) saturate(200%) brightness(1.05);
+  border: 0.5px solid rgba(255,255,255,0.1) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.06) inset,
+    0 4px 16px rgba(0,0,0,0.15);
+  position: relative;
+}
+
+/* ── SETTINGS SIDEBAR — thin glass ────────────────────────── */
+.s-sidebar {
+  background: rgba(255,255,255,0.03);
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  border-right: 0.5px solid rgba(255,255,255,0.08) !important;
+}
+
+/* ── GLASS TOGGLE SWITCHES — when ON ──────────────────────── */
+.s-toggle.on {
+  box-shadow: 0 0 12px rgba(59,130,246,0.3), 0 1px 0 rgba(255,255,255,0.1) inset;
+}
+
+/* ── BROWSER BAR — glass address bar ──────────────────────── */
+.browser-bar {
+  background: rgba(255,255,255,0.04) !important;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 0.5px solid rgba(255,255,255,0.1) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset;
+}
+
+/* ── FILE ROW SELECTION — glass highlight ─────────────────── */
+.file-row.selected {
+  background: rgba(59,130,246,0.15) !important;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 0.5px solid rgba(59,130,246,0.2);
+  border-radius: 8px;
+}
+
+/* ── Browser App Styles ────────────────────────────────────── */
+.browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  border: 0.5px solid rgba(255, 255, 255, 0.06);
+}
+.browser-nav-btn {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.browser-nav-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.06); }
+.browser-nav-btn:active { opacity: 0.6; }
+.browser-url {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: var(--ui);
+  padding: 7px 12px;
+  outline: none;
+}
+.browser-url:focus { border-color: var(--accent); background: rgba(255, 255, 255, 0.08); }
+.browser-frame {
+  width: 100%;
+  flex: 1;
+  border: none;
+  border-radius: 8px;
+  background: #fff;
+}
+
+/* ── Text Editor ───────────────────────────────────────────── */
+.editor-toolbar {
+  display: flex; gap: 4px; padding: 0 0 8px;
+  border-bottom: 0.5px solid var(--border-subtle); margin-bottom: 8px;
+}
+.editor-btn {
+  background: rgba(255,255,255,0.06); border: none; color: var(--text-tertiary);
+  font-size: 11px; padding: 4px 10px; border-radius: 5px;
+  cursor: pointer; font-family: var(--ui);
+}
+.editor-btn:hover { background: rgba(255,255,255,0.12); color: var(--text-secondary); }
+
+/* ── Dialog / Modal ────────────────────────────────────────── */
+.dialog-overlay {
+  position: absolute; inset: 0; background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center; z-index: 700;
+}
+.dialog-box {
+  background: var(--bg-titlebar); border-radius: 14px;
+  border: 0.5px solid var(--border); padding: 20px;
+  min-width: 280px; max-width: 360px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+}
+.dialog-title { font-size: 14px; color: var(--text-primary); font-weight: 500; margin-bottom: 8px; font-family: var(--ui); }
+.dialog-text { font-size: 12px; color: var(--text-tertiary); line-height: 1.5; margin-bottom: 14px; font-family: var(--ui); }
+.dialog-input {
+  width: 100%; background: var(--bg-card); border: 0.5px solid var(--border);
+  border-radius: 8px; color: var(--text-primary); font-family: var(--ui);
+  font-size: 13px; padding: 8px 12px; outline: none; margin-bottom: 12px;
+}
+.dialog-input:focus { border-color: var(--accent); }
+.dialog-btns { display: flex; gap: 8px; justify-content: flex-end; }
+.dialog-btn {
+  background: rgba(255,255,255,0.08); color: var(--text-secondary); border: none;
+  border-radius: 8px; padding: 7px 16px; font-size: 12px;
+  font-family: var(--ui); cursor: pointer;
+}
+.dialog-btn:hover { background: rgba(255,255,255,0.12); }
+.dialog-btn.primary { background: var(--accent); color: #fff; }
+.dialog-btn.primary:hover { filter: brightness(1.1); }
+.dialog-btn.danger { background: #dc2626; color: #fff; }
+</style>
+
+<!-- ============================================================
+     SECTION 2: HTML SHELL
+     ============================================================ -->
+<div id="os">
+  <!-- SVG filters for glass distortion -->
+  <svg id="glass-filters" xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0">
+    <filter id="glass-refract"><feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="2" result="noise"/><feDisplacementMap in="SourceGraphic" in2="noise" scale="3" xChannelSelector="R" yChannelSelector="G"/></filter>
+  </svg>
+  <div id="wallpaper"></div>
+
+  <!-- Menu Bar -->
+  <div id="menubar">
+    <div class="mb-left">
+      <div class="mb-logo" id="mb-logo" onclick="toggleMenu('kontur')">
+        <svg viewBox="0 0 16 16" fill="none" width="16" height="16">
+          <circle cx="8" cy="8" r="7" fill="#1a2d5a"/>
+          <path d="M5 8.5L7.2 10.8L11.2 5.8" stroke="#60a5fa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <span class="mb-item active" id="mb-appname" onclick="toggleMenu('kontur')">КонтурОС</span>
+      <span class="mb-item" onclick="toggleMenu('file')">
+        <span data-i18n="menu_file">Файл</span>
+        <div class="mb-dropdown" id="menu-file"></div>
+      </span>
+      <span class="mb-item" onclick="toggleMenu('edit')">
+        <span data-i18n="menu_edit">Правка</span>
+        <div class="mb-dropdown" id="menu-edit"></div>
+      </span>
+      <span class="mb-item" onclick="toggleMenu('view')">
+        <span data-i18n="menu_view">Вид</span>
+        <div class="mb-dropdown" id="menu-view"></div>
+      </span>
+    </div>
+    <div class="mb-right">
+      <span class="mb-status" id="mb-lang" onclick="cycleLang()" title="Language">RU</span>
+      <span class="mb-status" id="mb-wifi">
+        <svg width="15" height="12" viewBox="0 0 15 12" fill="none"><path d="M1.5 4.5C3.5 2.2 5.8 1 7.5 1C9.2 1 11.5 2.2 13.5 4.5" stroke="rgba(255,255,255,0.45)" stroke-width="1.3" stroke-linecap="round"/><path d="M3.8 6.8C5 5.5 6.3 4.8 7.5 4.8C8.7 4.8 10 5.5 11.2 6.8" stroke="rgba(255,255,255,0.45)" stroke-width="1.3" stroke-linecap="round"/><circle cx="7.5" cy="10" r="1.3" fill="rgba(255,255,255,0.45)"/></svg>
+      </span>
+      <span class="mb-status" id="mb-battery" style="display:flex;align-items:center;gap:3px">
+        <svg id="mb-battery-icon" width="18" height="12" viewBox="0 0 18 12" fill="none"><rect x="1" y="2" width="14" height="8" rx="1.5" stroke="rgba(255,255,255,0.35)" stroke-width="1"/><rect id="mb-battery-fill" x="2.5" y="3.5" width="9" height="5" rx="0.8" fill="rgba(255,255,255,0.35)"/><path d="M16 4.5V7.5" stroke="rgba(255,255,255,0.35)" stroke-width="1.2" stroke-linecap="round"/></svg>
+        <span id="mb-battery-pct" style="font-size:10px"></span>
+      </span>
+      <span class="mb-status" id="mb-clock">00:00</span>
+      <span class="mb-status" id="mb-notif-btn">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 1.5C4.3 1.5 2.5 3.1 2.5 5.2V8L1 9.5H12L10.5 8V5.2C10.5 3.1 8.7 1.5 6.5 1.5Z" stroke="rgba(255,255,255,0.45)" stroke-width="1.1"/><path d="M5.2 10.5C5.2 11.1 5.8 11.5 6.5 11.5C7.2 11.5 7.8 11.1 7.8 10.5" stroke="rgba(255,255,255,0.45)" stroke-width="1.1" stroke-linecap="round"/></svg>
+      </span>
+    </div>
+    <!-- KonturOS system menu dropdown -->
+    <div class="mb-dropdown" id="menu-kontur" style="top:22px;left:14px;"></div>
+  </div>
+
+  <!-- Desktop -->
+  <div id="desktop" oncontextmenu="showCtx(event)"></div>
+
+  <!-- Dock -->
+  <div id="dock"><div id="dockbar"></div></div>
+
+  <!-- Launcher -->
+  <div id="launcher"><div id="launcher-box">
+    <div id="launcher-input-wrap">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;opacity:.35"><circle cx="6.5" cy="6.5" r="5" stroke="white" stroke-width="1.4"/><path d="M10.5 10.5L14 14" stroke="white" stroke-width="1.4" stroke-linecap="round"/></svg>
+      <input id="launcher-input" oninput="filterLauncher(this.value)" onkeydown="launcherKey(event)">
+    </div>
+    <div id="launcher-results"></div>
+  </div></div>
+
+  <!-- Notification Panel -->
+  <div id="notif-panel"></div>
+
+  <!-- Context Menu -->
+  <div class="ctx-menu" id="ctx-menu"></div>
+
+  <!-- Dialog container -->
+  <div id="dialog-container"></div>
+
+  <!-- Hidden file input for wallpaper picker -->
+  <input type="file" id="wallpaper-file-input" accept="image/*" style="display:none;user-select:auto;pointer-events:auto" onchange="handleWallpaperFile(this)">
+</div>
+
+<script>
+
+/* ══════════════════════════════════════════════════════════════
+   KONTUR OS v1.0.0 — JAVASCRIPT ENGINE
+   ══════════════════════════════════════════════════════════════ */
+
+/* ─── 1. INTERNATIONALIZATION (i18n) ─────────────────────── */
+const LANG = {
+  ru: {
+    os_name: 'КонтурОС',
+    // Menu bar
+    menu_file: 'Файл', menu_edit: 'Правка', menu_view: 'Вид',
+    // Kontur menu
+    about_os: 'О КонтурОС', preferences: 'Настройки', logout: 'Выйти', restart: 'Перезагрузить',
+    // File menu
+    new_window: 'Новое окно', new_folder: 'Новая папка', new_file: 'Новый файл',
+    close_window: 'Закрыть окно', save: 'Сохранить',
+    // Edit menu
+    undo: 'Отменить', redo: 'Повторить', cut: 'Вырезать',
+    copy: 'Копировать', paste: 'Вставить', select_all: 'Выбрать всё',
+    // View menu
+    zoom_in: 'Увеличить', zoom_out: 'Уменьшить', fullscreen: 'Полный экран',
+    // Apps
+    app_files: 'Файлы', app_browser: 'Браузер', app_term: 'Терминал',
+    app_sysmon: 'Монитор', app_calc: 'Калькулятор', app_clock: 'Часы',
+    app_settings: 'Настройки', app_editor: 'Редактор',
+    // App subtitles
+    sub_files: 'Файловый менеджер', sub_browser: 'Веб-браузер',
+    sub_term: 'Командная строка', sub_sysmon: 'Система + ИИ',
+    sub_calc: 'Арифметика', sub_clock: 'Время',
+    sub_settings: 'Настройки системы', sub_editor: 'Текстовый редактор',
+    // Files app
+    files_new_folder: 'Новая папка', files_new_file: 'Новый файл',
+    files_delete: 'Удалить', files_rename: 'Переименовать',
+    folder: 'папка', open: 'Открыть', back: 'Назад',
+    empty_folder: 'Папка пуста',
+    // File dialogs
+    enter_name: 'Введите имя', create: 'Создать', cancel: 'Отмена',
+    delete_confirm: 'Удалить безвозвратно?', delete_btn: 'Удалить',
+    rename_title: 'Переименовать',
+    // Editor
+    editor_save: 'Сохранить', editor_saved: 'Сохранено', editor_close: 'Закрыть',
+    // Settings
+    set_display: 'Дисплей', set_sound: 'Звук', set_network: 'Сеть',
+    set_notif: 'Уведомления', set_appearance: 'Оформление',
+    set_language: 'Язык', set_access: 'Доступность',
+    set_storage: 'Хранилище', set_update: 'Обновление', set_about: 'О системе',
+    // Settings: Display
+    brightness: 'Яркость', dark_mode: 'Тёмный режим', resolution: 'Разрешение',
+    auto_brightness: 'Авто-яркость', night_shift: 'Ночной режим',
+    // Settings: Sound
+    volume: 'Громкость', system_sounds: 'Звуки системы',
+    notification_sound: 'Звук уведомлений', startup_sound: 'Звук при запуске',
+    // Settings: Network
+    wifi: 'Wi-Fi', wifi_on: 'Включён', wifi_off: 'Выключен',
+    ip_address: 'IP-адрес', mac_address: 'MAC-адрес', hostname: 'Имя хоста',
+    dns: 'DNS-сервер', bluetooth: 'Bluetooth',
+    // Settings: Notifications
+    notifications: 'Уведомления', do_not_disturb: 'Не беспокоить',
+    show_previews: 'Показывать текст', badge_count: 'Счётчик на иконке',
+    // Settings: Appearance
+    wallpaper: 'Обои', accent_color: 'Цвет акцента',
+    choose_from_files: 'Выбрать из файлов',
+    loading: 'Загрузка...', untitled: 'без имени',
+    copy_file: 'Копировать', paste_file: 'Вставить', cut_file: 'Вырезать',
+    open_in_system: 'Открыть в системе',
+    build: 'Сборка', build_number: '2025.03.31.1300',
+    light_mode: 'Светлый режим',
+    browser_note: 'Страницы открываются в системном браузере',
+    custom_wallpaper: 'Своё изображение',
+    no_preview: 'Предпросмотр недоступен',
+    open_in_finder: 'Показать в Finder',
+    dock_size: 'Размер панели', dock_autohide: 'Автоскрытие панели',
+    animations: 'Анимации', transparency: 'Прозрачность',
+    // Settings: Language
+    language: 'Язык интерфейса', lang_ru: 'Русский', lang_en: 'English',
+    lang_note: 'Язык изменится сразу',
+    // Settings: Accessibility
+    font_size: 'Размер шрифта', high_contrast: 'Высокий контраст',
+    reduce_motion: 'Меньше движения', larger_cursor: 'Крупный курсор',
+    // Settings: Storage
+    total_storage: 'Всего', used: 'Занято', free: 'Свободно',
+    system_files: 'Система', apps_size: 'Приложения', docs_size: 'Документы', other_size: 'Другое',
+    // Settings: Update
+    current_version: 'Текущая версия', check_update: 'Проверить обновления',
+    checking: 'Проверяю...', up_to_date: 'Система обновлена',
+    update_available: 'Доступно обновление', download_install: 'Скачать и установить',
+    changelog: 'Что нового',
+    changelog_text: '• Полная файловая система с редактором\n• Двуязычный интерфейс (RU/EN)\n• Расширенные настройки\n• Рабочая верхняя панель\n• Обновление ПО',
+    installing: 'Устанавливаю...', install_complete: 'Установка завершена!',
+    restart_to_apply: 'Перезагрузите для применения',
+    // Settings: About
+    version: 'Версия', kernel: 'Ядро', platform: 'Платформа',
+    cores: 'Ядра процессора', memory: 'Оперативная память',
+    ui_font: 'Шрифт интерфейса', mono_font: 'Моноширинный шрифт', uptime_label: 'Время работы',
+    // System Monitor
+    cpu: 'Процессор', mem: 'Память', temperature: 'Температура',
+    uptime_s: 'Uptime', cores_label: 'ядер', of_total: 'из',
+    normal_temp: 'норма < 80°C', cpu_history: 'Процессор (график)',
+    mem_history: 'Память (график)', ai_analysis: 'ИИ-анализ · Claude',
+    analyzing: 'Анализирую...', ai_unavailable: 'ИИ-анализ недоступен.',
+    // Clock
+    timezone: 'Часовой пояс', format_24: 'Формат', cpu_cores_label: 'Ядра CPU',
+    // Context menu
+    ctx_wallpaper: 'Сменить обои', ctx_launcher: 'Поиск', ctx_settings: 'Настройки',
+    ctx_new_folder: 'Новая папка', ctx_new_file: 'Новый файл',
+    // Notifications
+    notif_title: 'Уведомления',
+    notif_welcome: 'Добро пожаловать в КонтурОС v1.0',
+    notif_welcome_sub: 'Система готова к работе',
+    notif_monitor: 'Монитор: ИИ-анализ активен',
+    notif_just_now: 'только что', notif_1min: '1 мин назад',
+    // Terminal
+    term_help: 'Команды: help  ls  cd  cat  mkdir  touch  rm  uname  echo  date  clear  kontur  uptime  whoami  neofetch  sysinfo  pwd',
+    term_intro: 'КонтурОС Terminal v1.0 — введи help',
+    term_not_found: 'kosh: не найдено:',
+    // Search
+    search_placeholder: 'Поиск...',
+    // Misc
+    error: 'Ошибка', yes: 'Да', no: 'Нет', ok: 'ОК',
+    // About dialog
+    about_title: 'О КонтурОС',
+    about_text: 'Версия 1.0.0\nДля Raspberry Pi 5\nSafari-совместимая сборка',
+  },
+  en: {
+    os_name: 'KonturOS',
+    menu_file: 'File', menu_edit: 'Edit', menu_view: 'View',
+    about_os: 'About KonturOS', preferences: 'Settings', logout: 'Log Out', restart: 'Restart',
+    new_window: 'New Window', new_folder: 'New Folder', new_file: 'New File',
+    close_window: 'Close Window', save: 'Save',
+    undo: 'Undo', redo: 'Redo', cut: 'Cut',
+    copy: 'Copy', paste: 'Paste', select_all: 'Select All',
+    zoom_in: 'Zoom In', zoom_out: 'Zoom Out', fullscreen: 'Full Screen',
+    app_files: 'Files', app_browser: 'Browser', app_term: 'Terminal',
+    app_sysmon: 'Monitor', app_calc: 'Calculator', app_clock: 'Clock',
+    app_settings: 'Settings', app_editor: 'Editor',
+    sub_files: 'File Manager', sub_browser: 'Web Browser',
+    sub_term: 'Command Line', sub_sysmon: 'System + AI',
+    sub_calc: 'Arithmetic', sub_clock: 'Time',
+    sub_settings: 'System Settings', sub_editor: 'Text Editor',
+    files_new_folder: 'New Folder', files_new_file: 'New File',
+    files_delete: 'Delete', files_rename: 'Rename',
+    folder: 'папка', open: 'Открыть', back: 'Назад',
+    empty_folder: 'Folder is empty',
+    enter_name: 'Enter name', create: 'Create', cancel: 'Cancel',
+    delete_confirm: 'Delete permanently?', delete_btn: 'Delete',
+    rename_title: 'Rename',
+    editor_save: 'Save', editor_saved: 'Saved', editor_close: 'Close',
+    set_display: 'Display', set_sound: 'Sound', set_network: 'Network',
+    set_notif: 'Notifications', set_appearance: 'Appearance',
+    set_language: 'Language', set_access: 'Accessibility',
+    set_storage: 'Storage', set_update: 'Update', set_about: 'About',
+    brightness: 'Brightness', dark_mode: 'Dark Mode', resolution: 'Resolution',
+    auto_brightness: 'Auto Brightness', night_shift: 'Night Shift',
+    volume: 'Volume', system_sounds: 'System Sounds',
+    notification_sound: 'Notification Sound', startup_sound: 'Startup Sound',
+    wifi: 'Wi-Fi', wifi_on: 'Connected', wifi_off: 'Off',
+    ip_address: 'IP Address', mac_address: 'MAC Address', hostname: 'Hostname',
+    dns: 'DNS Server', bluetooth: 'Bluetooth',
+    notifications: 'Notifications', do_not_disturb: 'Do Not Disturb',
+    show_previews: 'Show Previews', badge_count: 'Badge Count',
+    wallpaper: 'Wallpaper', accent_color: 'Accent Color',
+    choose_from_files: 'Choose from Files',
+    loading: 'Loading...', untitled: 'untitled',
+    copy_file: 'Copy', paste_file: 'Paste', cut_file: 'Cut',
+    open_in_system: 'Open in system',
+    build: 'Build', build_number: '2025.03.31.1300',
+    light_mode: 'Light Mode',
+    browser_note: 'Pages open in system browser',
+    custom_wallpaper: 'Custom image',
+    no_preview: 'Preview unavailable',
+    open_in_finder: 'Show in Finder',
+    dock_size: 'Dock Size', dock_autohide: 'Auto-hide Dock',
+    animations: 'Animations', transparency: 'Transparency',
+    language: 'Interface Language', lang_ru: 'Русский', lang_en: 'English',
+    lang_note: 'Language changes instantly',
+    font_size: 'Font Size', high_contrast: 'High Contrast',
+    reduce_motion: 'Reduce Motion', larger_cursor: 'Larger Cursor',
+    total_storage: 'Total', used: 'Used', free: 'Free',
+    system_files: 'System', apps_size: 'Apps', docs_size: 'Documents', other_size: 'Other',
+    current_version: 'Current Version', check_update: 'Check for Updates',
+    checking: 'Checking...', up_to_date: 'System is up to date',
+    update_available: 'Update available', download_install: 'Download & Install',
+    changelog: 'What\'s New',
+    changelog_text: '• Full filesystem with editor\n• Bilingual interface (RU/EN)\n• Extended settings\n• Working menu bar\n• Software update',
+    installing: 'Installing...', install_complete: 'Installation complete!',
+    restart_to_apply: 'Restart to apply',
+    version: 'Version', kernel: 'Kernel', platform: 'Platform',
+    cores: 'CPU Cores', memory: 'Memory',
+    ui_font: 'UI Font', mono_font: 'Mono Font', uptime_label: 'Uptime',
+    cpu: 'CPU', mem: 'Memory', temperature: 'Temperature',
+    uptime_s: 'Uptime', cores_label: 'cores', of_total: 'of',
+    normal_temp: 'normal < 80°C', cpu_history: 'CPU (graph)',
+    mem_history: 'Memory (graph)', ai_analysis: 'AI Analysis · Claude',
+    analyzing: 'Analyzing...', ai_unavailable: 'AI analysis unavailable.',
+    timezone: 'Timezone', format_24: 'Format', cpu_cores_label: 'CPU Cores',
+    ctx_wallpaper: 'Change Wallpaper', ctx_launcher: 'Search', ctx_settings: 'Settings',
+    ctx_new_folder: 'New Folder', ctx_new_file: 'New File',
+    notif_title: 'Notifications',
+    notif_welcome: 'Welcome to KonturOS v1.0',
+    notif_welcome_sub: 'System is ready',
+    notif_monitor: 'Monitor: AI analysis active',
+    notif_just_now: 'just now', notif_1min: '1 min ago',
+    term_help: 'Commands: help  ls  cd  cat  mkdir  touch  rm  uname  echo  date  clear  kontur  uptime  whoami  neofetch  sysinfo  pwd',
+    term_intro: 'KonturOS Terminal v1.0 — type help',
+    term_not_found: 'kosh: not found:',
+    search_placeholder: 'Search...',
+    error: 'Error', yes: 'Yes', no: 'No', ok: 'OK',
+    about_title: 'About KonturOS',
+    about_text: 'Version 1.0.0\nFor Raspberry Pi 5\nSafari-compatible build',
+  }
+};
+
+/** Get translation for current language */
+function t(key) { return LANG[CFG.lang]?.[key] || LANG.ru[key] || key; }
+
+/** Apply language to all [data-i18n] elements */
+function applyLang() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.getElementById('launcher-input').placeholder = t('search_placeholder');
+  document.getElementById('mb-lang').textContent = CFG.lang.toUpperCase();
+  document.getElementById('mb-appname').textContent = t('os_name');
+  buildMenus();
+  buildDock();
+  buildDesktopIcons();
+  buildNotifPanel();
+  buildCtxMenu();
+  // Refresh open settings window if visible
+  if (openWindows['settings']) {
+    const wc = document.getElementById('wc_settings');
+    if (wc) renderSettingsPage(wc, currentSettingsPage);
+  }
+}
+
+function cycleLang() {
+  CFG.lang = CFG.lang === 'ru' ? 'en' : 'ru';
+  applyLang();
+}
+
+
+/* ─── 2. GLOBAL CONFIGURATION ────────────────────────────── */
+const CFG = {
+  lang: 'ru',
+  vol: 70, bright: 80,
+  wifi: true, bluetooth: false, notif: true, dnd: false,
+  anim: true, transparency: true, darkMode: true,
+  showPreviews: true, badgeCount: true,
+  nightShift: false, autoBright: false,
+  systemSounds: true, notifSound: true, startupSound: true,
+  highContrast: false, reduceMotion: false, largerCursor: false,
+  fontSize: 13, dockSize: 50, dockAutohide: false,
+  accentColor: '#3b82f6',
+  wallpaper: 'default-dark',
+  wallpaperCustom: null,
+  wallpaperCustomName: null,
+  updateState: 'idle', // idle | checking | available | installing | done
+};
+
+let windowZIndex = 10;
+let openWindows = {};
+let launcherSelection = 0;
+let launcherFiltered = [];
+let launcherVisible = false;
+let currentSettingsPage = 'display';
+let activeMenuId = null;
+
+
+/* ─── 3. APP REGISTRY ────────────────────────────────────── */
+function getApps() {
+  return [
+    { id:'files',    nameKey:'app_files',    subKey:'sub_files',    bg:'#112244' },
+    { id:'browser',  nameKey:'app_browser',  subKey:'sub_browser',  bg:'#1a0d2e' },
+    { id:'term',     nameKey:'app_term',     subKey:'sub_term',     bg:'#0a2015' },
+    { id:'sysmon',   nameKey:'app_sysmon',   subKey:'sub_sysmon',   bg:'#0e1e14' },
+    { id:'calc',     nameKey:'app_calc',     subKey:'sub_calc',     bg:'#1a1a35' },
+    { id:'clock',    nameKey:'app_clock',    subKey:'sub_clock',    bg:'#221010' },
+    { id:'settings', nameKey:'app_settings', subKey:'sub_settings', bg:'#1e1e2e' },
+    { id:'editor',   nameKey:'app_editor',   subKey:'sub_editor',   bg:'#1e1a10' },
+  ];
+}
+
+const APP_ICONS = {
+  files:   `<svg width="SVG_SIZE" height="SVG_SIZE" viewBox="0 0 28 28" fill="none"><rect x="3" y="9" width="22" height="15" rx="2.5" fill="#2563eb"/><path d="M3 11.5V9.5C3 8.4 3.9 7.5 5 7.5H11.5L14 11.5H3Z" fill="#60a5fa"/></svg>`,
+  browser: `<svg width="SVG_SIZE" height="SVG_SIZE" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="10" stroke="#a78bfa" stroke-width="1.5"/><ellipse cx="14" cy="14" rx="4" ry="10" stroke="#a78bfa" stroke-width="1.2"/><line x1="4" y1="14" x2="24" y2="14" stroke="#a78bfa" stroke-width="1.1"/></svg>`,
+  term:    `<svg width="SVG_SIZE" height="SVG_SIZE" viewBox="0 0 28 28" fill="none"><rect x="3" y="4" width="22" height="20" rx="3" fill="#14532d"/><path d="M8 11L12 14L8 17" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 17H20" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round"/></svg>`,
+  sysmon:  `<svg width="SVG_SIZE" height="SVG_SIZE" viewBox="0 0 28 28" fill="none"><rect x="2" y="2" width="24" height="20" rx="2.5" stroke="#34d399" stroke-width="1.5"/><polyline points="4,18 8,11 12,14 17,7 24,12" stroke="#34d399" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>`,
+  calc:    `<svg width="SVG_SIZE" height="SVG_SIZE" viewBox="0 0 28 28" fill="none"><rect x="4" y="4" width="20" height="20" rx="3" fill="#312e6a"/><rect x="7" y="7" width="14" height="5" rx="1.2" fill="#a78bfa" opacity=".6"/><rect x="7" y="15" width="4" height="3" rx="1" fill="#a78bfa"/><rect x="12" y="15" width="4" height="3" rx="1" fill="#a78bfa"/><rect x="17" y="15" width="4" height="3" rx="1" fill="#a78bfa"/></svg>`,
+  clock:   `<svg width="SVG_SIZE" height="SVG_SIZE" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="10" stroke="#f87171" stroke-width="1.4"/><path d="M14 8V14L17.5 17.5" stroke="#f87171" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  settings:`<svg width="SVG_SIZE" height="SVG_SIZE" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="4" stroke="#94a3b8" stroke-width="1.5"/><path d="M14 3V7M14 21V25M3 14H7M21 14H25M5.9 5.9L8.8 8.8M19.2 19.2L22.1 22.1M5.9 22.1L8.8 19.2M19.2 8.8L22.1 5.9" stroke="#94a3b8" stroke-width="1.4" stroke-linecap="round"/></svg>`,
+  editor:  `<svg width="SVG_SIZE" height="SVG_SIZE" viewBox="0 0 28 28" fill="none"><rect x="4" y="3" width="20" height="22" rx="2.5" fill="#78350f"/><path d="M8 9H20M8 13H18M8 17H16M8 21H14" stroke="#fbbf24" stroke-width="1.3" stroke-linecap="round"/></svg>`,
+};
+
+function appIcon(id, size) {
+  return (APP_ICONS[id] || '').replace(/SVG_SIZE/g, size || 26);
+}
+
+
+/* ─── 4. VIRTUAL FILE SYSTEM ─────────────────────────────── */
+/*
+ * Full tree structure. Each node:
+ * { type: 'dir'|'file', children: [...names], size, content, modified }
+ *
+ * Xcode porting: Replace with FileManager API and sandbox containers.
+ */
+const FS = {};
+
+function fsInit() {
+  const now = new Date().toISOString().slice(0, 16);
+  const dir = (children) => ({ type: 'dir', children: [...children], modified: now });
+  const file = (size, content) => ({ type: 'file', size: size || '0 KB', content: content || '', modified: now });
+
+  FS['/'] = dir(['Documents', 'Downloads', 'Pictures', 'Projects', 'Music', 'Desktop', 'README.md', '.konturos']);
+  FS['/Documents']   = dir(['notes.txt', 'report.pdf', 'kontur-spec.md', 'todo.txt', 'contacts.csv']);
+  FS['/Downloads']   = dir(['konturos-1.0.img', 'wlroots-0.17.tar.gz', 'fonts.zip']);
+  FS['/Pictures']    = dir(['wallpaper.png', 'screenshot.png', 'photo-2024.jpg', 'icon-draft.svg']);
+  FS['/Projects']    = dir(['konturos', 'kernel-patches', 'web-app']);
+  FS['/Projects/konturos']          = dir(['compositor.c', 'dock.c', 'launcher.c', 'settings.c', 'i18n.c', 'Makefile', 'README.md']);
+  FS['/Projects/kernel-patches']    = dir(['rp1-drm.patch', 'bcm2712-pm.patch', 'thermal-fix.patch']);
+  FS['/Projects/web-app']           = dir(['index.html', 'style.css', 'app.js', 'package.json']);
+  FS['/Music']       = dir(['playlist.m3u', 'ambient.mp3']);
+  FS['/Desktop']     = dir([]);
+  FS['/.konturos']   = dir(['config.json', 'theme.json', 'history.log']);
+
+  // Generate files with content
+  FS['/README.md']   = file('2 KB', '# КонтурОС\n\nОперационная система для Raspberry Pi 5.\nВерсия 1.0.0\n\n## Возможности\n- Оконный менеджер\n- Файловая система\n- Терминал\n- Системный монитор с ИИ\n- Калькулятор\n- Настройки\n\n## Сборка\nmake && sudo make install');
+  FS['/Documents/notes.txt']    = file('1 KB', 'Заметки:\n- Исправить баг с рендерингом\n- Добавить поддержку i18n\n- Тесты на Safari\n- Оптимизация памяти');
+  FS['/Documents/todo.txt']     = file('0.5 KB', '☐ Файловая система v2\n☑ Локализация\n☐ Тёмная тема\n☑ Dock эффекты\n☐ Экспорт в Xcode');
+  FS['/Documents/contacts.csv'] = file('0.3 KB', 'Имя,Email,Роль\nАлексей,alex@kontur.dev,Lead\nМария,maria@kontur.dev,UI/UX\nДмитрий,dmitry@kontur.dev,Kernel');
+  FS['/Documents/kontur-spec.md'] = file('4 KB', '# Спецификация КонтурОС\n\n## Архитектура\n- Wayland compositor на базе wlroots\n- ARM64 (BCM2712)\n- GPU: VideoCore VII\n\n## Требования\n- Raspberry Pi 5 (4GB+)\n- microSD 16GB+\n- USB-C питание 5V/5A');
+  FS['/Documents/report.pdf']   = file('156 KB', '[PDF binary — not editable]');
+  FS['/Projects/konturos/compositor.c'] = file('12 KB', '#include <wlr/types/wlr_compositor.h>\n#include "konturos.h"\n\nstatic void handle_new_surface(struct wl_listener *listener, void *data) {\n    struct kontur_surface *surface = wl_container_of(listener, surface, map);\n    wlr_scene_node_set_enabled(&surface->scene_tree->node, true);\n    focus_surface(surface);\n}\n\nvoid compositor_init(struct kontur_server *server) {\n    server->compositor = wlr_compositor_create(server->display, 5, server->renderer);\n    server->subcompositor = wlr_subcompositor_create(server->display);\n}');
+  FS['/Projects/konturos/Makefile'] = file('0.8 KB', 'CC = gcc\nCFLAGS = -Wall -Wextra -O2 $(shell pkg-config --cflags wlroots wayland-server)\nLDFLAGS = $(shell pkg-config --libs wlroots wayland-server) -lm\n\nSRC = compositor.c dock.c launcher.c settings.c i18n.c\nOBJ = $(SRC:.c=.o)\n\nkonturos: $(OBJ)\n\t$(CC) -o $@ $^ $(LDFLAGS)\n\nclean:\n\trm -f konturos $(OBJ)\n\ninstall: konturos\n\tcp konturos /usr/local/bin/');
+  FS['/Projects/web-app/index.html'] = file('0.5 KB', '<!DOCTYPE html>\n<html>\n<head><title>KonturOS Web</title></head>\n<body>\n  <h1>Hello from KonturOS</h1>\n</body>\n</html>');
+  FS['/Projects/web-app/package.json'] = file('0.2 KB', '{\n  "name": "konturos-web",\n  "version": "1.0.0",\n  "scripts": { "dev": "vite" }\n}');
+  FS['/.konturos/config.json'] = file('0.4 KB', '{\n  "version": "1.0.0",\n  "theme": "dark",\n  "locale": "ru",\n  "dock_position": "bottom",\n  "wallpaper": "#090c17"\n}');
+
+  // Auto-generate any missing files
+  Object.keys(FS).forEach(path => {
+    const node = FS[path];
+    if (node.type === 'dir') {
+      node.children.forEach(name => {
+        const cp = (path === '/' ? '' : path) + '/' + name;
+        if (!FS[cp]) FS[cp] = file(Math.round(1 + Math.random() * 500) + ' KB', '');
+      });
+    }
+  });
+}
+
+// FS helpers
+function fsGet(path) { return FS[path] || null; }
+function fsIsDir(path) { return FS[path]?.type === 'dir'; }
+function fsParent(path) {
+  if (path === '/') return '/';
+  const parts = path.split('/').filter(Boolean);
+  parts.pop();
+  return '/' + parts.join('/') || '/';
+}
+function fsName(path) { return path.split('/').filter(Boolean).pop() || '/'; }
+
+function fsCreateDir(parentPath, name) {
+  const p = (parentPath === '/' ? '' : parentPath) + '/' + name;
+  if (FS[p]) return false;
+  FS[p] = { type: 'dir', children: [], modified: new Date().toISOString().slice(0,16) };
+  FS[parentPath].children.push(name);
+  return true;
+}
+
+function fsCreateFile(parentPath, name, content) {
+  const p = (parentPath === '/' ? '' : parentPath) + '/' + name;
+  if (FS[p]) return false;
+  FS[p] = { type: 'file', size: '0 KB', content: content || '', modified: new Date().toISOString().slice(0,16) };
+  FS[parentPath].children.push(name);
+  return true;
+}
+
+function fsDelete(path) {
+  if (path === '/') return false;
+  const parent = fsParent(path);
+  const name = fsName(path);
+  const pNode = FS[parent];
+  if (!pNode) return false;
+  pNode.children = pNode.children.filter(c => c !== name);
+  // Recursively delete children
+  if (FS[path]?.type === 'dir') {
+    FS[path].children.forEach(ch => fsDelete((path === '/' ? '' : path) + '/' + ch));
+  }
+  delete FS[path];
+  return true;
+}
+
+function fsRename(path, newName) {
+  if (path === '/') return false;
+  const parent = fsParent(path);
+  const oldName = fsName(path);
+  const newPath = (parent === '/' ? '' : parent) + '/' + newName;
+  if (FS[newPath]) return false;
+  FS[newPath] = FS[path];
+  delete FS[path];
+  const pNode = FS[parent];
+  const idx = pNode.children.indexOf(oldName);
+  if (idx !== -1) pNode.children[idx] = newName;
+  // If dir, update all child paths
+  if (FS[newPath].type === 'dir') {
+    const updateChildren = (oldP, newP) => {
+      FS[newP].children.forEach(ch => {
+        const oldCh = oldP + '/' + ch;
+        const newCh = newP + '/' + ch;
+        if (FS[oldCh]) {
+          FS[newCh] = FS[oldCh];
+          delete FS[oldCh];
+          if (FS[newCh].type === 'dir') updateChildren(oldCh, newCh);
+        }
+      });
+    };
+    updateChildren(path, newPath);
+  }
+  return true;
+}
+
+function fsSave(path, content) {
+  if (FS[path]) {
+    FS[path].content = content;
+    FS[path].size = Math.ceil(new Blob([content]).size / 1024) + ' KB';
+    FS[path].modified = new Date().toISOString().slice(0,16);
+    return true;
+  }
+  return false;
+}
+
+let fsCwd = '/';
+let selectedFile = null;
+let fsClipboard = { path: null, op: null }; // { path: '~/...', op: 'copy'|'cut' }
+
+
+/* ─── 5. DIALOG SYSTEM ───────────────────────────────────── */
+function showDialog({ title, text, input, inputValue, buttons }) {
+  return new Promise(resolve => {
+    const container = document.getElementById('dialog-container');
+    const html = `<div class="dialog-overlay" onclick="if(event.target===this)closeDialog(null)">
+      <div class="dialog-box">
+        <div class="dialog-title">${title}</div>
+        ${text ? `<div class="dialog-text">${text}</div>` : ''}
+        ${input ? `<input class="dialog-input" id="dialog-inp" value="${inputValue || ''}" placeholder="${title}">` : ''}
+        <div class="dialog-btns">${buttons.map((b, i) =>
+          `<button class="dialog-btn ${b.cls || ''}" onclick="closeDialog(${i})">${b.label}</button>`
+        ).join('')}</div>
+      </div>
+    </div>`;
+    container.innerHTML = html;
+    window._dialogResolve = resolve;
+    window._dialogButtons = buttons;
+    if (input) {
+      const inp = document.getElementById('dialog-inp');
+      setTimeout(() => { inp.focus(); inp.select(); }, 50);
+      inp.onkeydown = e => { if (e.key === 'Enter') closeDialog(buttons.length - 1); };
+    }
+  });
+}
+
+function closeDialog(btnIndex) {
+  const container = document.getElementById('dialog-container');
+  const inp = document.getElementById('dialog-inp');
+  const value = inp ? inp.value : null;
+  container.innerHTML = '';
+  if (window._dialogResolve) {
+    window._dialogResolve(btnIndex !== null ? { btn: btnIndex, value } : null);
+    window._dialogResolve = null;
+  }
+}
+
+
+/* ─── 6. MENU BAR ────────────────────────────────────────── */
+function buildMenus() {
+  // KonturOS menu
+  document.getElementById('menu-kontur').innerHTML = `
+    <div class="mdd-item" onclick="closeAllMenus();showAboutDialog()">${t('about_os')}</div>
+    <div class="mdd-sep"></div>
+    <div class="mdd-item" onclick="closeAllMenus();openWin('settings')">${t('preferences')} <span class="shortcut">⌘,</span></div>
+    <div class="mdd-sep"></div>
+    <div class="mdd-item" onclick="closeAllMenus();doRestart()">${t('restart')}</div>`;
+  // File menu
+  document.getElementById('menu-file').innerHTML = `
+    <div class="mdd-item" onclick="closeAllMenus();menuNewWindow()">${t('new_window')} <span class="shortcut">⌘N</span></div>
+    <div class="mdd-item" onclick="closeAllMenus();menuNewFolder()">${t('new_folder')} <span class="shortcut">⇧⌘N</span></div>
+    <div class="mdd-item" onclick="closeAllMenus();menuNewFile()">${t('new_file')}</div>
+    <div class="mdd-sep"></div>
+    <div class="mdd-item" onclick="closeAllMenus();menuCloseWindow()">${t('close_window')} <span class="shortcut">⌘W</span></div>`;
+  // Edit menu
+  document.getElementById('menu-edit').innerHTML = `
+    <div class="mdd-item disabled">${t('undo')} <span class="shortcut">⌘Z</span></div>
+    <div class="mdd-item disabled">${t('redo')} <span class="shortcut">⇧⌘Z</span></div>
+    <div class="mdd-sep"></div>
+    <div class="mdd-item disabled">${t('cut')} <span class="shortcut">⌘X</span></div>
+    <div class="mdd-item disabled">${t('copy')} <span class="shortcut">⌘C</span></div>
+    <div class="mdd-item disabled">${t('paste')} <span class="shortcut">⌘V</span></div>
+    <div class="mdd-sep"></div>
+    <div class="mdd-item disabled">${t('select_all')} <span class="shortcut">⌘A</span></div>`;
+  // View menu
+  document.getElementById('menu-view').innerHTML = `
+    <div class="mdd-item disabled">${t('zoom_in')} <span class="shortcut">⌘+</span></div>
+    <div class="mdd-item disabled">${t('zoom_out')} <span class="shortcut">⌘−</span></div>
+    <div class="mdd-sep"></div>
+    <div class="mdd-item disabled">${t('fullscreen')} <span class="shortcut">⌃⌘F</span></div>`;
+}
+
+function toggleMenu(id) {
+  const allMenus = document.querySelectorAll('.mb-dropdown');
+  const target = document.getElementById('menu-' + id);
+  if (activeMenuId === id) { closeAllMenus(); return; }
+  allMenus.forEach(m => m.classList.remove('show'));
+  target?.classList.add('show');
+  activeMenuId = id;
+}
+
+function closeAllMenus() {
+  document.querySelectorAll('.mb-dropdown').forEach(m => m.classList.remove('show'));
+  activeMenuId = null;
+}
+
+// Menu actions
+function menuNewWindow() { openWin('files'); }
+async function menuNewFolder() {
+  if (!openWindows['files']) return;
+  const res = await showDialog({ title: t('files_new_folder'), input: true, inputValue: '', buttons: [{ label: t('cancel') }, { label: t('create'), cls: 'primary' }] });
+  if (res?.btn === 1 && res.value.trim()) {
+    fsCreateDir(fsCwd, res.value.trim());
+    refreshFiles();
+  }
+}
+async function menuNewFile() {
+  if (!openWindows['files']) return;
+  const res = await showDialog({ title: t('files_new_file'), input: true, inputValue: 'untitled.txt', buttons: [{ label: t('cancel') }, { label: t('create'), cls: 'primary' }] });
+  if (res?.btn === 1 && res.value.trim()) {
+    fsCreateFile(fsCwd, res.value.trim(), '');
+    refreshFiles();
+  }
+}
+function menuCloseWindow() {
+  const topWin = Object.keys(openWindows).reduce((top, id) => {
+    const z = parseInt(openWindows[id].style.zIndex) || 0;
+    return z > (top.z || 0) ? { id, z } : top;
+  }, {});
+  if (topWin.id) closeWin(topWin.id);
+}
+function showAboutDialog() {
+  showDialog({ title: t('about_title'), text: t('about_text').replace(/\n/g, '<br>'), buttons: [{ label: t('ok'), cls: 'primary' }] });
+}
+function doRestart() {
+  document.getElementById('os').style.opacity = '0';
+  setTimeout(() => { location.reload(); }, 600);
+}
+
+
+/* ─── 7. NOTIFICATION PANEL ──────────────────────────────── */
+function buildNotifPanel() {
+  document.getElementById('notif-panel').innerHTML = `
+    <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em;font-family:var(--ui);font-weight:600;margin-bottom:2px">${t('notif_title')}</div>
+    <div class="notif-item">
+      <div class="notif-icon" style="background:#112244"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" fill="#2563eb" opacity=".7"/><path d="M4.5 7L6.2 8.8L9.5 5" stroke="white" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div><div class="notif-text">${t('notif_welcome')}</div><div class="notif-time">${t('notif_just_now')}</div></div>
+    </div>
+    <div class="notif-item">
+      <div class="notif-icon" style="background:#0e1e14"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="10" rx="2" stroke="#34d399" stroke-width="1.1"/><polyline points="2,8 4.5,5 7,6.5 9,4 12,6" stroke="#34d399" stroke-width="1.1" stroke-linecap="round" fill="none"/></svg></div>
+      <div><div class="notif-text">${t('notif_monitor')}</div><div class="notif-time">${t('notif_1min')}</div></div>
+    </div>`;
+}
+
+function buildCtxMenu() {
+  document.getElementById('ctx-menu').innerHTML = `
+    <div class="ctx-item" onclick="ctxAction('wall')">${t('ctx_wallpaper')}</div>
+    <div class="ctx-item" onclick="ctxAction('launch')">${t('ctx_launcher')}</div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item" onclick="ctxAction('new_folder')">${t('ctx_new_folder')}</div>
+    <div class="ctx-item" onclick="ctxAction('new_file')">${t('ctx_new_file')}</div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item" onclick="ctxAction('settings')">${t('ctx_settings')}</div>`;
+}
+
+
+/* ─── 8. DESKTOP ICONS ───────────────────────────────────── */
+function buildDesktopIcons() {
+  const icons = [
+    { id: 'files', y: 14 }, { id: 'term', y: 96 }, { id: 'sysmon', y: 178 }, { id: 'calc', y: 260 }
+  ];
+  const app = getApps();
+  document.getElementById('desktop').innerHTML = icons.map(ic => {
+    const a = app.find(x => x.id === ic.id);
+    return `<div class="desk-icon" style="left:18px;top:${ic.y}px" ondblclick="openWin('${ic.id}')">
+      <div class="icon-box" style="background:${a.bg}">${appIcon(ic.id, 28)}</div>
+      <span class="icon-label">${t(a.nameKey)}</span>
+    </div>`;
+  }).join('');
+}
+
+
+/* ─── 9. DOCK ─────────────────────────────────────────────── */
+function buildDock() {
+  const dockApps = ['files', 'browser', 'term', 'sysmon', 'calc', 'clock'];
+  const apps = getApps();
+  const bar = document.getElementById('dockbar');
+  bar.innerHTML = dockApps.map(id => {
+    const a = apps.find(x => x.id === id);
+    const running = openWindows[id] ? ' running' : '';
+    return `<div class="dock-icon${running}" id="dock-${id}" style="background:${a.bg}" onclick="openWin('${id}')" onmouseenter="dockHover(this)" onmouseleave="dockLeave()">
+      ${appIcon(id, 26)}<div class="dock-tip">${t(a.nameKey)}</div>
+    </div>`;
+  }).join('') +
+  `<div class="dock-div"></div>` +
+  `<div class="dock-icon${openWindows['settings'] ? ' running' : ''}" id="dock-settings" style="background:#1e1e2e" onclick="openWin('settings')" onmouseenter="dockHover(this)" onmouseleave="dockLeave()">
+    ${appIcon('settings', 26)}<div class="dock-tip">${t('app_settings')}</div>
+  </div>`;
+}
+
+function dockHover(el) {
+  const sibs = [...el.parentElement.children].filter(c => c.classList.contains('dock-icon'));
+  const idx = sibs.indexOf(el);
+  sibs.forEach((s, i) => { s.classList.remove('neighbor'); if (Math.abs(i - idx) === 1) s.classList.add('neighbor'); });
+}
+function dockLeave() {
+  document.querySelectorAll('.dock-icon').forEach(d => d.classList.remove('neighbor'));
+}
+function updateDockDots() {
+  document.querySelectorAll('.dock-icon').forEach(d => {
+    const id = d.id.replace('dock-', '');
+    d.classList.toggle('running', !!openWindows[id]);
+  });
+}
+
+
+/* ─── 10. WINDOW MANAGER ─────────────────────────────────── */
+const WIN_SIZES = {
+  settings: [520, 420], calc: [265, 355], clock: [300, 295],
+  sysmon: [420, 400], files: [480, 370], browser: [640, 440],
+  term: [480, 310], editor: [460, 360],
+};
+
+function openWin(id, opts) {
+  if (openWindows[id]) { openWindows[id].style.zIndex = ++windowZIndex; return; }
+  const apps = getApps();
+  const app = apps.find(x => x.id === id);
+  if (!app) return;
+  const win = document.createElement('div');
+  win.className = 'win opening';
+  const n = Object.keys(openWindows).length;
+  const [ww, wh] = WIN_SIZES[id] || [420, 320];
+  win.style.cssText = `left:${60 + n * 22}px;top:${35 + n * 16}px;width:${ww}px;height:${wh}px;z-index:${++windowZIndex}`;
+  const bodyStyle = id === 'settings' ? 'padding:0;display:flex;' : id === 'browser' ? 'display:flex;flex-direction:column;' : '';
+  win.innerHTML = `<div class="win-titlebar">
+    <div class="win-lights">
+      <div class="wl wl-close" onclick="closeWin('${id}')"></div>
+      <div class="wl wl-min" onclick="minWin('${id}')"></div>
+      <div class="wl wl-max" onclick="maxWin('${id}')"></div>
+    </div>
+    <span class="win-title">${t(app.nameKey)}</span>
+  </div>
+  <div class="win-body" id="wc_${id}" style="${bodyStyle}"></div>`;
+  document.getElementById('os').appendChild(win);
+  openWindows[id] = win;
+  enableDrag(win, win.querySelector('.win-titlebar'));
+  requestAnimationFrame(() => requestAnimationFrame(() => win.classList.remove('opening')));
+  // Render content
+  renderWinContent(id, opts);
+  // Post-open hooks
+  if (id === 'term') setTimeout(() => { const i = document.getElementById('term-input'); if (i) i.focus(); }, 80);
+  if (id === 'clock') tickClock();
+  if (id === 'sysmon') {
+    renderSM(fakeSys()); win._t = setInterval(() => renderSM(fakeSys()), 1800);
+    setTimeout(() => fetchAI(fakeSys()), 400);
+    win._ai = setInterval(() => fetchAI(fakeSys()), 30000);
+  }
+  updateDockDots();
+  document.getElementById('mb-appname').textContent = t(app.nameKey);
+}
+
+function closeWin(id) {
+  if (!openWindows[id]) return;
+  openWindows[id].classList.add('closing');
+  setTimeout(() => {
+    if (openWindows[id]) {
+      if (openWindows[id]._t) clearInterval(openWindows[id]._t);
+      if (openWindows[id]._ai) clearInterval(openWindows[id]._ai);
+      openWindows[id].remove(); delete openWindows[id];
+    }
+    updateDockDots();
+    document.getElementById('mb-appname').textContent = t('os_name');
+  }, 140);
+}
+function minWin(id) { if (openWindows[id]) openWindows[id].style.display = openWindows[id].style.display === 'none' ? 'flex' : 'none'; }
+function maxWin(id) {
+  const w = openWindows[id]; if (!w) return;
+  if (w._max) { Object.assign(w.style, { left: w._mx, top: w._my, width: w._mw, height: w._mh }); delete w._max; }
+  else { w._mx = w.style.left; w._my = w.style.top; w._mw = w.style.width; w._mh = w.style.height;
+    Object.assign(w.style, { left: '0px', top: '0px', width: '100%', height: (document.getElementById('os').offsetHeight - 26 - 80) + 'px' }); w._max = 1; }
+}
+function enableDrag(el, handle) {
+  let ox, oy;
+  handle.onmousedown = e => {
+    if (e.target.classList.contains('wl')) return;
+    e.preventDefault(); el.style.zIndex = ++windowZIndex;
+    ox = e.clientX - el.offsetLeft; oy = e.clientY - el.offsetTop;
+    document.onmousemove = e2 => { el.style.left = Math.max(0, e2.clientX - ox) + 'px'; el.style.top = Math.max(26, Math.min(e2.clientY - oy, document.getElementById('os').offsetHeight - 85)) + 'px'; };
+    document.onmouseup = () => { document.onmousemove = null; document.onmouseup = null; };
+  };
+}
+
+
+/* ─── 11. WINDOW CONTENT ROUTER ──────────────────────────── */
+function renderWinContent(id, opts) {
+  const wc = document.getElementById('wc_' + id);
+  if (!wc) return;
+  if (id === 'files')    { wc.innerHTML = filesHTML(fsCwd); return; }
+  if (id === 'browser')  { wc.innerHTML = browserHTML(); return; }
+  if (id === 'term')     { wc.innerHTML = termHTML(); return; }
+  if (id === 'sysmon')   { wc.innerHTML = sysmonHTML(); return; }
+  if (id === 'calc')     { wc.innerHTML = calcHTML(); return; }
+  if (id === 'clock')    { wc.innerHTML = clockHTML(); return; }
+  if (id === 'settings') { wc.innerHTML = settingsHTML(); return; }
+  if (id === 'editor')   { wc.innerHTML = editorHTML(opts?.path, opts?.content); return; }
+}
+
+
+/* ─── 12. FILES APP ──────────────────────────────────────── */
+function filesHTML(path) {
+  const node = FS[path] || FS['/'];
+  const parts = path.split('/').filter(Boolean);
+  const bc = `<div class="file-path">
+    <span class="fp-btn" onclick="fsNav('/')">~</span>
+    ${parts.map((p, i) => `<span style="opacity:.3">›</span><span class="fp-btn" onclick="fsNav('/${parts.slice(0, i + 1).join('/')}')">${p}</span>`).join('')}
+  </div>`;
+  const toolbar = `<div class="files-toolbar">
+    ${path !== '/' ? `<button class="files-btn" onclick="fsNav('${fsParent(path)}')" title="${t('back')}">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8 2L4 6L8 10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+    </button>` : ''}
+    <button class="files-btn" onclick="filesNewFolder()">+ ${t('files_new_folder')}</button>
+    <button class="files-btn" onclick="filesNewFile()">+ ${t('files_new_file')}</button>
+    ${selectedFile ? `<button class="files-btn" onclick="filesRename()" style="margin-left:auto">${t('files_rename')}</button>
+    <button class="files-btn" onclick="filesDelete()" style="color:var(--red)">${t('files_delete')}</button>` : ''}
+  </div>`;
+
+  if (node.type === 'file') {
+    return bc + `<div style="padding:30px;text-align:center;color:var(--text-muted);font-size:13px">
+      ${fsName(path)}<br><span style="font-size:11px">${node.size}</span>
+      ${node.content ? `<br><button class="files-btn" style="margin-top:12px" onclick="openFileEditor('${path}')">${t('open')}</button>` : ''}
+    </div>`;
+  }
+
+  if (node.children.length === 0) {
+    return bc + toolbar + `<div style="padding:40px;text-align:center;color:var(--text-muted);font-size:12px">${t('empty_folder')}</div>`;
+  }
+
+  // Sort: dirs first, then files
+  const sorted = [...node.children].sort((a, b) => {
+    const ap = (path === '/' ? '' : path) + '/' + a;
+    const bp = (path === '/' ? '' : path) + '/' + b;
+    const aDir = fsIsDir(ap) ? 0 : 1;
+    const bDir = fsIsDir(bp) ? 0 : 1;
+    return aDir - bDir || a.localeCompare(b);
+  });
+
+  const rows = sorted.map(name => {
+    const cp = (path === '/' ? '' : path) + '/' + name;
+    const child = FS[cp] || { type: 'file', size: '--' };
+    const isDir = child.type === 'dir';
+    const sel = selectedFile === cp ? ' selected' : '';
+    const icon = isDir
+      ? `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="5" width="14" height="9" rx="1.5" fill="#2563eb"/><path d="M1 6.5V5.5C1 4.7 1.6 4 2.4 4H6.5L8 6.5H1Z" fill="#60a5fa"/></svg>`
+      : getFileIcon(name);
+    return `<div class="file-row${sel}" onclick="selectFile('${cp}')" ondblclick="${isDir ? `fsNav('${cp}')` : `openFileEditor('${cp}')`}">
+      <div style="width:26px;height:26px;border-radius:6px;background:${isDir ? '#112244' : '#1e293b'};display:flex;align-items:center;justify-content:center;flex-shrink:0">${icon}</div>
+      <span class="file-name">${name}${isDir ? '/' : ''}</span>
+      <span class="file-meta">${isDir ? t('folder') : child.size}</span>
+    </div>`;
+  }).join('');
+
+  return bc + toolbar + `<div>${rows}</div>`;
+}
+
+function getFileIcon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  const colors = { js: '#fbbf24', ts: '#3b82f6', py: '#34d399', c: '#60a5fa', h: '#60a5fa', rs: '#fb923c', html: '#f87171', css: '#a78bfa', json: '#fbbf24', md: '#94a3b8', txt: '#94a3b8', pdf: '#f87171', png: '#22d3ee', jpg: '#22d3ee', svg: '#a78bfa', zip: '#94a3b8', gz: '#94a3b8', img: '#34d399', mp3: '#f472b6', csv: '#34d399', m3u: '#f472b6', patch: '#fb923c', log: '#6b7280' };
+  const color = colors[ext] || '#94a3b8';
+  return `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="12" height="14" rx="1.5" fill="#334155"/><text x="8" y="10.5" text-anchor="middle" font-size="4.5" fill="${color}" font-family="var(--mono)" font-weight="600">${ext.toUpperCase().slice(0, 3)}</text></svg>`;
+}
+
+function fsNav(path) { fsCwd = path; selectedFile = null; refreshFiles(false); }
+function refreshFiles(keepScroll) {
+  const wc = document.getElementById('wc_files');
+  if (!wc) return;
+  const scrollPos = keepScroll ? wc.scrollTop : 0;
+  wc.innerHTML = filesHTML(fsCwd);
+  if (keepScroll) requestAnimationFrame(() => wc.scrollTop = scrollPos);
+}
+function selectFile(path) { selectedFile = selectedFile === path ? null : path; refreshFiles(true); }
+
+async function filesNewFolder() {
+  const res = await showDialog({ title: t('files_new_folder'), input: true, buttons: [{ label: t('cancel') }, { label: t('create'), cls: 'primary' }] });
+  if (res?.btn === 1 && res.value.trim()) { fsCreateDir(fsCwd, res.value.trim()); refreshFiles(); }
+}
+async function filesNewFile() {
+  const res = await showDialog({ title: t('files_new_file'), input: true, inputValue: 'untitled.txt', buttons: [{ label: t('cancel') }, { label: t('create'), cls: 'primary' }] });
+  if (res?.btn === 1 && res.value.trim()) { fsCreateFile(fsCwd, res.value.trim(), ''); refreshFiles(); }
+}
+async function filesDelete() {
+  if (!selectedFile) return;
+  const res = await showDialog({ title: t('files_delete'), text: `${t('delete_confirm')}\n<b>${fsName(selectedFile)}</b>`, buttons: [{ label: t('cancel') }, { label: t('delete_btn'), cls: 'danger' }] });
+  if (res?.btn === 1) { fsDelete(selectedFile); selectedFile = null; refreshFiles(); }
+}
+async function filesRename() {
+  if (!selectedFile) return;
+  const res = await showDialog({ title: t('rename_title'), input: true, inputValue: fsName(selectedFile), buttons: [{ label: t('cancel') }, { label: t('ok'), cls: 'primary' }] });
+  if (res?.btn === 1 && res.value.trim()) { fsRename(selectedFile, res.value.trim()); selectedFile = null; refreshFiles(); }
+}
+
+
+function fsCopyVirtual() { if (selectedFile) fsClipboard = { path: selectedFile, op: 'copy' }; refreshFiles(true); }
+function fsCutVirtual() { if (selectedFile) fsClipboard = { path: selectedFile, op: 'cut' }; refreshFiles(true); }
+function fsPasteVirtual() {
+  if (!fsClipboard.path || !FS[fsClipboard.path]) return;
+  const name = fsName(fsClipboard.path);
+  const dest = (fsCwd === '/' ? '' : fsCwd) + '/' + name;
+  if (fsClipboard.op === 'copy') {
+    const src = FS[fsClipboard.path];
+    if (src.type === 'file') fsCreateFile(fsCwd, name, src.content || '');
+  } else if (fsClipboard.op === 'cut') {
+    fsRename(fsClipboard.path, name);
+    fsClipboard = { path: null, op: null };
+  }
+  selectedFile = null; refreshFiles(false);
+}
+
+function openFileEditor(path) {
+  const node = FS[path];
+  if (!node || node.type !== 'file') return;
+  if (!node.content || node.content.startsWith('[')) {
+    // Binary or non-editable
+    return;
+  }
+  openWin('editor', { path, content: node.content });
+}
+
+
+/* ─── 13. TEXT EDITOR APP ────────────────────────────────── */
+let editorCurrentPath = '';
+
+function editorHTML(path, content) {
+  editorCurrentPath = path || '';
+  return `<div class="editor-toolbar">
+    <span style="font-size:11px;color:var(--text-muted);font-family:var(--mono)">${path ? fsName(path) : t('untitled')}</span>
+    <button class="editor-btn" style="margin-left:auto" onclick="editorSave()">${t('editor_save')}</button>
+    <span id="editor-status" style="font-size:10px;color:var(--green);opacity:0;transition:opacity 0.3s;font-family:var(--ui)"></span>
+  </div>
+  <textarea class="file-editor" id="editor-textarea" spellcheck="false">${escapeHtml(content || '')}</textarea>`;
+}
+
+function editorSave() {
+  const ta = document.getElementById('editor-textarea');
+  if (!ta || !editorCurrentPath) return;
+  fsSave(editorCurrentPath, ta.value);
+  const status = document.getElementById('editor-status');
+  if (status) { status.textContent = '✓ ' + t('editor_saved'); status.style.opacity = '1'; setTimeout(() => status.style.opacity = '0', 1500); }
+}
+
+function escapeHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+
+/* ─── 14. BROWSER APP ────────────────────────────────────── */
+let browserHistory = [];
+let browserUrl = '';
+
+function browserHTML() {
+  const bookmarks = [
+    { name: 'DuckDuckGo', url: 'https://duckduckgo.com', icon: '🦆' },
+    { name: 'Wikipedia', url: 'https://wikipedia.org', icon: '📚' },
+    { name: 'GitHub', url: 'https://github.com', icon: '🐙' },
+    { name: 'YouTube', url: 'https://youtube.com', icon: '▶️' },
+    { name: 'Reddit', url: 'https://reddit.com', icon: '🤖' },
+    { name: 'StackOverflow', url: 'https://stackoverflow.com', icon: '📋' },
+    { name: 'Hacker News', url: 'https://news.ycombinator.com', icon: '📰' },
+    { name: 'MDN Docs', url: 'https://developer.mozilla.org', icon: '📖' },
+  ];
+  const historyHTML = browserHistory.length > 0
+    ? `<div style="margin-top:16px"><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;font-family:var(--ui);font-weight:600">${CFG.lang==='ru'?'Недавние':'Recent'}</div>
+       ${browserHistory.slice(-6).reverse().map(h => `<div class="file-row" onclick="browserOpen('${escapeHtml(h)}')"><span class="file-name" style="font-size:12px">${h.replace('https://','').replace('http://','').substring(0,50)}</span></div>`).join('')}</div>`
+    : '';
+  return `<div style="display:flex;flex-direction:column;height:100%">
+    <div class="browser-bar">
+      <button class="browser-nav-btn" onclick="browserOpen(document.getElementById('browser-url').value)">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7H11M8 4L11 7L8 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <input class="browser-url" id="browser-url" value="" onkeydown="if(event.key==='Enter')browserOpen(this.value)" placeholder="${CFG.lang==='ru'?'Поиск или адрес...':'Search or URL...'}">
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:10px 4px">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+        ${bookmarks.map(b => `<div style="text-align:center;cursor:pointer;padding:14px 6px;border-radius:12px;transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''" onclick="browserOpen('${b.url}')">
+          <div style="font-size:24px;margin-bottom:6px">${b.icon}</div>
+          <div style="font-size:11px;color:var(--text-secondary);font-family:var(--ui)">${b.name}</div>
+        </div>`).join('')}
+      </div>
+      ${historyHTML}
+      <div style="text-align:center;margin-top:20px;font-size:11px;color:var(--text-muted);font-family:var(--ui)">${t('browser_note')}</div>
+    </div>
+  </div>`;
+}
+
+function browserOpen(rawUrl) {
+  if (!rawUrl || !rawUrl.trim()) return;
+  let url = rawUrl.trim();
+  if (!url.match(/^https?:\/\//)) {
+    if (url.includes('.') && !url.includes(' ')) url = 'https://' + url;
+    else url = 'https://duckduckgo.com/?q=' + encodeURIComponent(url);
+  }
+  browserHistory.push(url);
+  window.open(url, '_blank');
+}
+
+
+/* ─── 15. TERMINAL APP ───────────────────────────────────── */
+let termLines = [];
+let termCwd = '/';
+
+function termHTML() {
+  if (termLines.length === 0) termLines = [`<span style="color:var(--text-muted)">${t('term_intro')}</span>`];
+  return `<div id="term-output" class="term-body">${termLines.join('\n')}</div>
+  <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+    <span class="term-prompt">kontur@pi5:${termCwd}$</span>
+    <input class="term-input" id="term-input" autocomplete="off" spellcheck="false" onkeydown="termKey(event)">
+  </div>`;
+}
+
+function termKey(e) {
+  if (e.key !== 'Enter') return;
+  const inp = document.getElementById('term-input');
+  const raw = inp.value.trim(); inp.value = '';
+  if (!raw) return;
+  const prompt = `<span class="term-prompt">kontur@pi5:${termCwd}$</span> ${escapeHtml(raw)}`;
+  const parts = raw.split(/\s+/);
+  const cmd = parts[0].toLowerCase();
+  const args = parts.slice(1).join(' ');
+  let out = '';
+
+  switch (cmd) {
+    case 'help': out = t('term_help'); break;
+    case 'clear': termLines = []; { const o = document.getElementById('term-output'); if (o) o.innerHTML = ''; } return;
+    case 'echo': out = escapeHtml(args); break;
+    case 'date': out = new Date().toLocaleString(CFG.lang === 'ru' ? 'ru-RU' : 'en-US'); break;
+    case 'uname': out = 'Linux kontur-pi5 6.6.0-kontur #1 SMP PREEMPT aarch64 GNU/Linux'; break;
+    case 'kontur': out = 'КонтурОС v1.0.0 — Safari-compatible build'; break;
+    case 'uptime': { const u = Math.floor(performance.now() / 1000); out = `up ${Math.floor(u / 60)}m ${u % 60}s, load: 0.${Math.floor(Math.random() * 5)}${Math.floor(Math.random() * 9)}`; break; }
+    case 'whoami': out = 'kontur-user'; break;
+    case 'pwd': out = termCwd; break;
+    case 'ls': {
+      const target = args ? resolvePath(termCwd, args) : termCwd;
+      const node = FS[target];
+      if (!node) { out = `<span style="color:var(--red)">ls: ${args}: нет такого файла</span>`; }
+      else if (node.type === 'dir') { out = node.children.map(c => fsIsDir((target === '/' ? '' : target) + '/' + c) ? `<span style="color:#60a5fa">${c}/</span>` : c).join('  '); }
+      else { out = fsName(target); }
+      break;
+    }
+    case 'cd': {
+      if (!args || args === '~') { termCwd = '/'; out = ''; break; }
+      const target = resolvePath(termCwd, args);
+      if (FS[target]?.type === 'dir') { termCwd = target; out = ''; }
+      else { out = `<span style="color:var(--red)">cd: ${args}: нет такой папки</span>`; }
+      break;
+    }
+    case 'cat': {
+      if (!args) { out = 'cat: missing file'; break; }
+      const target = resolvePath(termCwd, args);
+      const node = FS[target];
+      if (!node) { out = `<span style="color:var(--red)">cat: ${args}: нет такого файла</span>`; }
+      else if (node.type === 'dir') { out = `<span style="color:var(--red)">cat: ${args}: это папка</span>`; }
+      else { out = escapeHtml(node.content || '(empty)'); }
+      break;
+    }
+    case 'mkdir': {
+      if (!args) { out = 'mkdir: missing name'; break; }
+      const success = fsCreateDir(termCwd, args);
+      out = success ? '' : `<span style="color:var(--red)">mkdir: ${args}: уже существует</span>`;
+      break;
+    }
+    case 'touch': {
+      if (!args) { out = 'touch: missing name'; break; }
+      const success = fsCreateFile(termCwd, args, '');
+      out = success ? '' : `<span style="color:var(--red)">touch: ${args}: уже существует</span>`;
+      break;
+    }
+    case 'rm': {
+      if (!args) { out = 'rm: missing name'; break; }
+      const target = resolvePath(termCwd, args);
+      const success = fsDelete(target);
+      out = success ? '' : `<span style="color:var(--red)">rm: ${args}: не найден</span>`;
+      break;
+    }
+    case 'sysinfo': out = `Platform:  ${navigator.platform || 'unknown'}\nCores:     ${navigator.hardwareConcurrency || 4} logical\nMemory:    ${navigator.deviceMemory || '?'} GB\nUA:        ${navigator.userAgent.substring(0, 55)}...`; break;
+    case 'neofetch': out = neofetchOutput(); break;
+    default: out = `<span style="color:var(--red)">${t('term_not_found')} ${escapeHtml(raw)}</span>`;
+  }
+  termLines.push(prompt);
+  if (out) termLines.push(out);
+  const tout = document.getElementById('term-output');
+  if (tout) { tout.innerHTML = termLines.join('\n'); tout.parentElement.scrollTop = 99999; }
+  // Update prompt
+  const promptEl = tout?.parentElement?.querySelector('.term-prompt');
+  if (promptEl) promptEl.textContent = `kontur@pi5:${termCwd}$`;
+}
+
+function resolvePath(cwd, rel) {
+  if (rel.startsWith('/')) return normalizePath(rel);
+  if (rel === '..') return fsParent(cwd);
+  if (rel.startsWith('../')) return resolvePath(fsParent(cwd), rel.slice(3));
+  return normalizePath((cwd === '/' ? '' : cwd) + '/' + rel);
+}
+function normalizePath(p) {
+  const parts = p.split('/').filter(Boolean);
+  const result = [];
+  parts.forEach(part => { if (part === '..') result.pop(); else if (part !== '.') result.push(part); });
+  return '/' + result.join('/') || '/';
+}
+
+function neofetchOutput() {
+  const isMac = navigator.platform?.includes('Mac');
+  return `<span style="color:#60a5fa">      /\\      </span> <span style="color:#6b7280">OS:</span> <span style="color:#e2e8f0">КонтурОС 1.0.0</span>
+<span style="color:#60a5fa">     /  \\     </span> <span style="color:#6b7280">Kernel:</span> <span style="color:#e2e8f0">6.6.0-kontur aarch64</span>
+<span style="color:#60a5fa">    / /\\ \\    </span> <span style="color:#6b7280">WM:</span> <span style="color:#e2e8f0">KonturWM / Wayland</span>
+<span style="color:#60a5fa">   / /  \\ \\   </span> <span style="color:#6b7280">Font:</span> <span style="color:#e2e8f0">${isMac ? '-apple-system / SF Pro' : 'system-ui / sans-serif'}</span>
+<span style="color:#60a5fa">  /_/    \\_\\  </span> <span style="color:#6b7280">CPU:</span> <span style="color:#e2e8f0">BCM2712 x${navigator.hardwareConcurrency || 4}</span>
+<span style="color:#60a5fa">  KonturOS    </span> <span style="color:#6b7280">RAM:</span> <span style="color:#e2e8f0">${navigator.deviceMemory || 8} GiB</span>
+             <span style="color:#3b82f6">██</span><span style="color:#a78bfa">██</span><span style="color:#34d399">██</span><span style="color:#f87171">██</span><span style="color:#fbbf24">██</span>`;
+}
+
+
+/* ─── 16. CALCULATOR APP ─────────────────────────────────── */
+let calcSt = { expr: '', result: '0', prev: '' };
+function cP(v) {
+  if (v === 'C') { calcSt = { expr: '', result: '0', prev: '' }; cR(); return; }
+  if (v === '=') { try { const r = Function('"use strict";return(' + calcSt.expr + ')')(); calcSt.prev = calcSt.expr + ' ='; calcSt.result = String(Math.round(r * 1e10) / 1e10); calcSt.expr = ''; } catch { calcSt.result = t('error'); calcSt.expr = ''; } cR(); return; }
+  if (v === 'back') { calcSt.expr = calcSt.expr.slice(0, -1); cR(); return; }
+  if (v === 'pm') { if (calcSt.expr) calcSt.expr = '(-(' + calcSt.expr + '))'; cR(); return; }
+  if (v === 'pct') { calcSt.expr += '/100'; cR(); return; }
+  calcSt.expr += v === 'x' ? '*' : v === 'div' ? '/' : v === 'min' ? '-' : v;
+  calcSt.result = calcSt.expr; cR();
+}
+function cR() { const d = document.getElementById('calc-display'); if (!d) return; d.querySelector('.calc-main').textContent = calcSt.result || '0'; d.querySelector('.calc-sub').textContent = calcSt.prev; }
+
+function calcHTML() {
+  const rows = [['C','pm','pct','div'],['7','8','9','x'],['4','5','6','min'],['1','2','3','+'],['0','.','=']];
+  return `<div class="calc-display" id="calc-display"><div class="calc-sub"></div><div class="calc-main">0</div></div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+  ${rows.map((row, ri) =>
+    row.map((v, ci) => {
+      const labels = { div: '÷', x: '×', min: '−', pm: '±', pct: '%' };
+      const disp = labels[v] || v;
+      const isOp = ['div', 'x', 'min', '+', '='].includes(v);
+      const isClear = v === 'C';
+      const bg = isOp ? '#1e3a6e' : isClear ? '#2a1010' : 'var(--bg-titlebar)';
+      const clr = isOp ? '#60a5fa' : isClear ? 'var(--red)' : 'rgba(255,255,255,.85)';
+      const sp = (ri === 4 && ci === 0) ? 'grid-column:span 2' : '';
+      return `<button class="calc-btn" style="background:${bg};color:${clr};${sp}" onclick="cP('${v}')">${disp}</button>`;
+    }).join('')
+  ).join('')}</div>`;
+}
+
+
+/* ─── 17. CLOCK APP ──────────────────────────────────────── */
+function clockHTML() {
+  const n = new Date();
+  return `<div style="display:flex;flex-direction:column;align-items:center;padding:18px 0 10px">
+    <div class="clock-big" id="clock-big">${[n.getHours(), n.getMinutes(), n.getSeconds()].map(v => String(v).padStart(2, '0')).join(':')}</div>
+    <div class="clock-date" id="clock-date">${n.toLocaleDateString(CFG.lang === 'ru' ? 'ru' : 'en', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
+  </div>
+  <div style="height:0.5px;background:var(--border);margin:10px 0"></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;padding:4px 0">
+    ${[[t('timezone'), 'UTC' + (new Date().getTimezoneOffset() > 0 ? '-' : '+') + Math.abs(new Date().getTimezoneOffset() / 60)],
+       [t('format_24'), '24h'],
+       [t('cpu_cores_label'), navigator.hardwareConcurrency || 4],
+       [t('platform'), navigator.platform || 'Linux']].map(([k, v]) =>
+      `<div style="padding:8px;background:var(--bg-card);border-radius:8px">
+        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;font-family:var(--ui);font-weight:600">${k}</div>
+        <div style="font-size:13px;color:var(--text-secondary);font-family:var(--ui)">${v}</div>
+      </div>`
+    ).join('')}
+  </div>`;
+}
+
+function tickClock() {
+  const n = new Date();
+  const b = document.getElementById('clock-big');
+  const d = document.getElementById('clock-date');
+  if (b) b.textContent = [n.getHours(), n.getMinutes(), n.getSeconds()].map(v => String(v).padStart(2, '0')).join(':');
+  if (d) d.textContent = n.toLocaleDateString(CFG.lang === 'ru' ? 'ru' : 'en', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+
+/* ─── 17.5 NATIVE BRIDGE (Swift ↔ JS) ───────────────────── */
+/*
+ * When running inside WKWebView, Swift injects window._nativeData
+ * which is kept up-to-date every second.
+ * When running standalone in browser, we fall back to fake data.
+ */
+const isNative = () => !!(window.webkit?.messageHandlers?.konturBridge);
+
+/** Request data from Swift */
+function nativeSend(action, data) {
+  if (isNative()) {
+    window.webkit.messageHandlers.konturBridge.postMessage({ action, data: data || {} });
+  }
+}
+
+/** Called by Swift to push system metrics */
+window._nativeData = null;
+window._nativeSysInfo = null;
+window._nativeBattery = null;
+window._nativeFS = null;
+
+/** Swift calls this to update system metrics */
+window.updateSystemData = function(data) { window._nativeData = data; };
+window.updateBattery = function(data) { window._nativeBattery = data; updateBatteryUI(data); };
+window.updateSysInfo = function(data) { window._nativeSysInfo = data; };
+
+/** Update battery indicator in menu bar */
+function updateBatteryUI(b) {
+  if (!b) return;
+  const fill = document.getElementById('mb-battery-fill');
+  const pctEl = document.getElementById('mb-battery-pct');
+  if (fill) {
+    const w = Math.max(1, Math.round(b.level / 100 * 11));
+    fill.setAttribute('width', w);
+    const color = b.charging ? '#4ade80' : b.level < 20 ? '#f87171' : b.level < 50 ? '#fbbf24' : 'rgba(255,255,255,0.35)';
+    fill.setAttribute('fill', color);
+  }
+  if (pctEl) pctEl.textContent = b.level + '%';
+}
+
+/** Called by Swift when native file listing returns */
+window.nativeFileList = null;
+window.updateNativeFiles = function(path, entries) {
+  window.nativeFileList = { path, entries };
+  // If files window is open, refresh
+  if (fsCwd === path && openWindows['files']) refreshFiles();
+};
+
+/** Called by Swift to push settings values */
+window.updateNativeSettings = function(data) {
+  if (data.volume !== undefined) CFG.vol = Math.round(data.volume);
+  if (data.brightness !== undefined) CFG.bright = Math.round(data.brightness * 100);
+  if (data.darkMode !== undefined) CFG.darkMode = data.darkMode;
+};
+
+/** Send settings changes to Swift */
+function nativeSetVolume(v) { nativeSend('setVolume', { value: v }); }
+function nativeSetBrightness(v) { nativeSend('setBrightness', { value: v / 100 }); }
+function nativeSetDarkMode(v) { nativeSend('setDarkMode', { value: v }); }
+function nativeSetWifi(v) { nativeSend('setWifi', { value: v }); }
+function nativeSetDND(v) { nativeSend('setDND', { value: v }); }
+function nativeRequestFiles(path) { nativeSend('listFiles', { path: path }); }
+function nativeReadFile(path) { nativeSend('readFile', { path: path }); }
+function nativeSaveFile(path, content) { nativeSend('saveFile', { path: path, content: content }); }
+function nativeOpenFinder(path) { nativeSend('openInFinder', { path: path }); }
+
+
+/* ─── 18. SYSTEM MONITOR APP ─────────────────────────────── */
+let cpuH = [], memH = [];
+function fakeSys() {
+  // Use native data from Swift if available
+  if (window._nativeData) {
+    const d = window._nativeData;
+    return {
+      cpu: Math.round(d.cpu || 0),
+      mem: Math.round(d.memUsed || 0),
+      memTotal: Math.round(d.memTotal || 8192),
+      temp: Math.round(d.temp || 45),
+      cores: d.cores || navigator.hardwareConcurrency || 4,
+      platform: d.platform || navigator.platform || 'macOS',
+      uptime: Math.round(d.uptime || performance.now() / 1000),
+      disk: d.disk || null,
+      model: d.model || '',
+    };
+  }
+  // Fallback for standalone browser
+  return { cpu: Math.round(8 + Math.random() * 45), mem: Math.round(210 + Math.random() * 120), memTotal: Math.round((navigator.deviceMemory || 8) * 1024), temp: Math.round(42 + Math.random() * 25), cores: navigator.hardwareConcurrency || 4, platform: navigator.platform || 'macOS', uptime: Math.floor(performance.now() / 1000) };
+}
+
+function sysmonHTML() {
+  const d = fakeSys();
+  return `<div class="smon-grid">
+    <div id="scpu"><div class="smon-card"><div class="smon-label">${t('cpu')}</div><div class="smon-val">${d.cpu}%</div><div class="smon-sub">${d.cores} ${t('cores_label')}</div><div class="smon-bar"><div class="smon-bar-fill" style="width:${d.cpu}%;background:var(--green)"></div></div></div></div>
+    <div id="smem"><div class="smon-card"><div class="smon-label">${t('mem')}</div><div class="smon-val">${d.mem} MB</div><div class="smon-sub">${t('of_total')} ${d.memTotal} MB</div><div class="smon-bar"><div class="smon-bar-fill" style="width:${Math.round(d.mem / d.memTotal * 100)}%;background:var(--accent)"></div></div></div></div>
+    <div id="stemp"><div class="smon-card"><div class="smon-label">${t('temperature')}</div><div class="smon-val">${d.temp}°C</div><div class="smon-sub">${t('normal_temp')}</div><div class="smon-bar"><div class="smon-bar-fill" style="width:${Math.min(100, d.temp * 1.3)}%;background:var(--purple)"></div></div></div></div>
+    <div id="supt"><div class="smon-card"><div class="smon-label">${t('uptime_s')}</div><div class="smon-val" style="font-size:16px">${Math.floor(d.uptime / 3600)}h ${Math.floor((d.uptime % 3600) / 60)}m</div><div class="smon-sub">${d.platform}</div><div class="smon-bar"><div class="smon-bar-fill" style="width:30%;background:var(--yellow)"></div></div></div></div>
+  </div>
+  <div class="smon-grid" style="margin-bottom:10px">
+    <div class="graph-wrap"><div class="graph-label">${t('cpu_history')}</div><canvas id="gcpu" style="display:block;width:100%;height:44px"></canvas></div>
+    <div class="graph-wrap"><div class="graph-label">${t('mem_history')}</div><canvas id="gmem" style="display:block;width:100%;height:44px"></canvas></div>
+  </div>
+  <div class="ai-bubble"><div class="ai-label">${t('ai_analysis')}</div><div id="aitext"><span class="ai-spin"></span>${t('analyzing')}</div></div>`;
+}
+
+function renderSM(data) {
+  cpuH.push(data.cpu); memH.push(Math.round(data.mem / data.memTotal * 100));
+  if (cpuH.length > 28) cpuH.shift(); if (memH.length > 28) memH.shift();
+  const upd = (id, val, pct, color, sub) => { const el = document.getElementById(id); if (!el) return; el.querySelector('.smon-val').textContent = val; el.querySelector('.smon-sub').textContent = sub; const f = el.querySelector('.smon-bar-fill'); if (f) { f.style.width = pct + '%'; f.style.background = color; } };
+  upd('scpu', data.cpu + '%', data.cpu, data.cpu > 70 ? 'var(--red)' : data.cpu > 40 ? 'var(--yellow)' : 'var(--green)', data.cores + ' ' + t('cores_label'));
+  upd('smem', data.mem + ' MB', Math.round(data.mem / data.memTotal * 100), 'var(--accent)', t('of_total') + ' ' + data.memTotal + ' MB');
+  upd('stemp', data.temp + '°C', Math.min(100, data.temp * 1.3), data.temp > 70 ? 'var(--red)' : data.temp > 55 ? 'var(--yellow)' : 'var(--purple)', t('normal_temp'));
+  const u = data.uptime; upd('supt', Math.floor(u / 3600) + 'h ' + Math.floor((u % 3600) / 60) + 'm', 30, 'var(--yellow)', data.platform);
+  drawGraph('gcpu', cpuH, '#34d399'); drawGraph('gmem', memH, '#3b82f6');
+}
+
+function drawGraph(id, data, color) {
+  const c = document.getElementById(id); if (!c || data.length < 2) return;
+  c.width = c.parentElement.offsetWidth - 24 || 300; c.height = 44;
+  const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height);
+  const w = c.width / (data.length - 1);
+  ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath();
+  data.forEach((v, i) => { const x = i * w, y = c.height - (v / 100) * c.height; i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+  ctx.stroke();
+  ctx.globalAlpha = 0.1; ctx.fillStyle = color; ctx.lineTo(c.width, c.height); ctx.lineTo(0, c.height); ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+}
+
+async function fetchAI(data) {
+  const el = document.getElementById('aitext'); if (!el) return;
+  el.innerHTML = `<span class="ai-spin"></span>${t('analyzing')}`;
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1000, messages: [{ role: 'user', content: `Ты системный монитор КонтурОС. Ответь ТОЛЬКО одним коротким абзацем (2-3 предложения, без markdown, на ${CFG.lang === 'ru' ? 'русском' : 'английском'}). CPU ${data.cpu}%, RAM ${data.mem}MB из ${data.memTotal}MB, температура ${data.temp}°C, ядра: ${data.cores}. Это нормально для Raspberry Pi 5?` }] }) });
+    const j = await r.json();
+    el.textContent = j.content?.[0]?.text || t('ai_unavailable');
+  } catch { el.textContent = t('ai_unavailable'); }
+}
+
+
+/* ─── 19. SETTINGS APP (EXTENDED) ────────────────────────── */
+const SETTINGS_PAGES = ['display', 'sound', 'network', 'notif', 'appearance', 'language', 'access', 'storage', 'update', 'about'];
+
+function settingsHTML() {
+  const icons = { display: '☀', sound: '♪', network: '⚡', notif: '🔔', appearance: '🎨', language: '🌐', access: '♿', storage: '💾', update: '⬆', about: 'ⓘ' };
+  const sidebar = SETTINGS_PAGES.map(p =>
+    `<div class="s-sidebar-item${currentSettingsPage === p ? ' active' : ''}" onclick="switchSettingsPage('${p}')">
+      <span style="font-size:14px;width:20px;text-align:center">${icons[p]}</span>
+      ${t('set_' + p)}
+    </div>`
+  ).join('');
+  return `<div class="s-sidebar">${sidebar}</div><div class="s-content" id="settings-content"></div>`;
+}
+
+function switchSettingsPage(page) {
+  currentSettingsPage = page;
+  // Update sidebar
+  document.querySelectorAll('.s-sidebar-item').forEach((el, i) => el.classList.toggle('active', SETTINGS_PAGES[i] === page));
+  const wc = document.getElementById('settings-content');
+  if (wc) renderSettingsPage(wc, page);
+}
+
+function renderSettingsPage(container, page) {
+  const toggle = (label, key) => `<div class="s-row" onclick="toggleCfg('${key}',this)"><span class="s-label">${label}</span><div class="s-toggle ${CFG[key] ? 'on' : 'off'}"><div class="s-knob"></div></div></div>`;
+  const slider = (label, key, min, max, unit) => `<div><div class="s-label" style="margin-bottom:4px">${label}</div><div class="s-slider-row"><input type="range" min="${min}" max="${max}" value="${CFG[key]}" step="1" oninput="this.nextElementSibling.textContent=this.value+'${unit}';applySlider('${key}',+this.value)"><span class="s-slider-val">${CFG[key]}${unit}</span></div></div>`;
+  const info = (label, value) => `<div class="s-row"><span class="s-label">${label}</span><span class="s-value">${value}</span></div>`;
+
+  let html = '';
+  switch (page) {
+    case 'display':
+      html = `<div class="s-section">${t('set_display')}</div>
+        ${slider(t('brightness'), 'bright', 10, 100, '%')}
+        ${toggle(t('auto_brightness'), 'autoBright')}
+        ${toggle(t('night_shift'), 'nightShift')}
+        ${toggle(CFG.darkMode ? t('dark_mode') : t('light_mode'), 'darkMode')}
+        ${info(t('resolution'), '1920 × 1080 @ 60Hz')}`;
+      break;
+    case 'sound':
+      html = `<div class="s-section">${t('set_sound')}</div>
+        ${slider(t('volume'), 'vol', 0, 100, '%')}
+        ${toggle(t('system_sounds'), 'systemSounds')}
+        ${toggle(t('notification_sound'), 'notifSound')}
+        ${toggle(t('startup_sound'), 'startupSound')}`;
+      break;
+    case 'network':
+      html = `<div class="s-section">${t('set_network')}</div>
+        ${toggle(t('wifi'), 'wifi')}
+        ${info(t('wifi'), CFG.wifi ? t('wifi_on') : t('wifi_off'))}
+        ${info(t('ip_address'), '192.168.1.' + Math.floor(100 + Math.random() * 50))}
+        ${info(t('mac_address'), 'DC:A6:32:' + Array.from({length:3},()=>Math.floor(Math.random()*256).toString(16).padStart(2,'0')).join(':').toUpperCase())}
+        ${info(t('hostname'), 'kontur-pi5')}
+        ${info(t('dns'), '1.1.1.1')}
+        <div class="s-section"></div>
+        ${toggle(t('bluetooth'), 'bluetooth')}`;
+      break;
+    case 'notif':
+      html = `<div class="s-section">${t('set_notif')}</div>
+        ${toggle(t('notifications'), 'notif')}
+        ${toggle(t('do_not_disturb'), 'dnd')}
+        ${toggle(t('show_previews'), 'showPreviews')}
+        ${toggle(t('badge_count'), 'badgeCount')}`;
+      break;
+    case 'appearance':
+      html = `<div class="s-section">${t('set_appearance')}</div>
+        <div class="s-label" style="margin-bottom:6px">${t('accent_color')}</div>
+        <div class="accent-grid">
+          ${['#3b82f6','#8b5cf6','#ec4899','#f43f5e','#f97316','#eab308','#22c55e','#06b6d4','#94a3b8'].map(c =>
+            `<div class="accent-swatch${CFG.accentColor === c ? ' active' : ''}" style="background:${c}" onclick="setAccentColor('${c}')"></div>`
+          ).join('')}
+        </div>
+        <div class="s-section">${t('wallpaper')}</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:4px 0">
+          ${[
+            { id:'default-dark',  bg:'linear-gradient(135deg,#090c17,#0d1225)', label:'Default Dark' },
+            { id:'deep-blue',     bg:'linear-gradient(135deg,#0a1628,#162d50,#0a1628)', label:'Deep Blue' },
+            { id:'forest',        bg:'linear-gradient(135deg,#0a1a10,#0f2b18,#081a0c)', label:'Forest' },
+            { id:'midnight',      bg:'linear-gradient(135deg,#0d0520,#1a0a35,#0d0520)', label:'Midnight' },
+            { id:'sunset',        bg:'linear-gradient(135deg,#1a0a0a,#2d1010,#1a0505)', label:'Sunset' },
+            { id:'amber',         bg:'linear-gradient(135deg,#1a1000,#2a1a05,#1a1000)', label:'Amber' },
+            { id:'slate',         bg:'linear-gradient(135deg,#0a0d1a,#141828,#0a0d1a)', label:'Slate' },
+            { id:'void',          bg:'linear-gradient(135deg,#050505,#101010,#050505)', label:'Void' },
+            { id:'aurora',        bg:'linear-gradient(135deg,#0a1a20,#0d2030,#081520)', label:'Aurora' },
+            { id:'nebula',        bg:'linear-gradient(135deg,#140d1e,#1e1030,#0d081a)', label:'Nebula' },
+            { id:'ocean',         bg:'linear-gradient(135deg,#081520,#0d2535,#061218)', label:'Ocean' },
+            { id:'carbon',        bg:'linear-gradient(135deg,#0d0d0d,#1a1a1a,#0d0d0d)', label:'Carbon' },
+          ].map(w =>
+            `<div style="height:44px;border-radius:10px;background:${w.bg};border:${CFG.wallpaper === w.id ? '2px solid var(--accent)' : '0.5px solid var(--border)'};cursor:pointer;display:flex;align-items:flex-end;padding:4px 6px" onclick="setWallpaper('${w.id}','${w.bg.replace(/'/g,'\\&#39;')}')"><span style="font-size:9px;color:rgba(255,255,255,0.4);font-family:var(--ui)">${w.label}</span></div>`
+          ).join('')}
+        </div>
+        <button class="update-btn" style="width:100%;margin:6px 0 10px;background:rgba(255,255,255,0.06);color:var(--text-secondary);display:flex;align-items:center;justify-content:center;gap:6px" onclick="openWallpaperPicker()">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v8M3 6l4-4 4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 10v2h10v-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          ${t('choose_from_files')}
+        </button>
+        ${CFG.wallpaperCustom ? `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;margin-bottom:6px">
+          <div style="width:48px;height:32px;border-radius:6px;background-image:url('${CFG.wallpaperCustom}');background-size:cover;background-position:center;border:0.5px solid var(--border)"></div>
+          <span style="font-size:11px;color:var(--text-tertiary);font-family:var(--ui);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${CFG.wallpaperCustomName || t('custom_wallpaper')}</span>
+          <button class="files-btn" onclick="clearCustomWallpaper()" style="color:var(--red);font-size:10px">✕</button>
+        </div>` : ''}
+        ${slider(t('dock_size'), 'dockSize', 35, 65, 'px')}
+        ${toggle(t('dock_autohide'), 'dockAutohide')}
+        ${toggle(t('animations'), 'anim')}
+        ${toggle(t('transparency'), 'transparency')}`;
+      break;
+    case 'language':
+      html = `<div class="s-section">${t('set_language')}</div>
+        <div class="s-label" style="margin-bottom:8px">${t('language')}</div>
+        <div style="display:flex;gap:8px">
+          <button class="dialog-btn${CFG.lang === 'ru' ? ' primary' : ''}" onclick="CFG.lang='ru';applyLang()" style="flex:1;text-align:center">🇷🇺 ${t('lang_ru')}</button>
+          <button class="dialog-btn${CFG.lang === 'en' ? ' primary' : ''}" onclick="CFG.lang='en';applyLang()" style="flex:1;text-align:center">🇬🇧 ${t('lang_en')}</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:10px">${t('lang_note')}</div>`;
+      break;
+    case 'access':
+      html = `<div class="s-section">${t('set_access')}</div>
+        ${slider(t('font_size'), 'fontSize', 10, 20, 'px')}
+        ${toggle(t('high_contrast'), 'highContrast')}
+        ${toggle(t('reduce_motion'), 'reduceMotion')}
+        ${toggle(t('larger_cursor'), 'largerCursor')}`;
+      break;
+    case 'storage':
+      const total = 32, system = 4.2, apps = 1.8, docs = 2.1, other = 0.9, free = total - system - apps - docs - other;
+      html = `<div class="s-section">${t('set_storage')}</div>
+        ${info(t('total_storage'), total + ' GB')}
+        <div class="storage-bar">
+          <div class="storage-seg" style="width:${system/total*100}%;background:#f43f5e" title="${t('system_files')}"></div>
+          <div class="storage-seg" style="width:${apps/total*100}%;background:#3b82f6" title="${t('apps_size')}"></div>
+          <div class="storage-seg" style="width:${docs/total*100}%;background:#22c55e" title="${t('docs_size')}"></div>
+          <div class="storage-seg" style="width:${other/total*100}%;background:#f97316" title="${t('other_size')}"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px;color:var(--text-muted);font-family:var(--ui)">
+          <span>🔴 ${t('system_files')}: ${system} GB</span><span>🔵 ${t('apps_size')}: ${apps} GB</span>
+          <span>🟢 ${t('docs_size')}: ${docs} GB</span><span>🟠 ${t('other_size')}: ${other} GB</span>
+        </div>
+        ${info(t('free'), free.toFixed(1) + ' GB')}`;
+      break;
+    case 'update':
+      html = `<div class="s-section">${t('set_update')}</div>
+        ${info(t('current_version'), 'КонтурОС 1.0.0')}
+        <div class="update-card">
+          <div id="update-status" style="font-size:13px;color:var(--text-secondary);font-family:var(--ui);margin-bottom:6px">${
+            CFG.updateState === 'idle' ? '' :
+            CFG.updateState === 'checking' ? t('checking') :
+            CFG.updateState === 'available' ? '✦ ' + t('update_available') + ' — v1.1.0' :
+            CFG.updateState === 'installing' ? t('installing') :
+            '✓ ' + t('install_complete')
+          }</div>
+          <div class="update-progress" id="update-progress" style="${CFG.updateState === 'installing' ? '' : 'display:none'}"><div class="update-progress-fill" id="update-fill"></div></div>
+          ${CFG.updateState === 'idle' ? `<button class="update-btn" onclick="checkForUpdate()">${t('check_update')}</button>` :
+            CFG.updateState === 'available' ? `<button class="update-btn" onclick="installUpdate()">${t('download_install')}</button>` :
+            CFG.updateState === 'done' ? `<div style="font-size:11px;color:var(--text-muted);margin-top:6px">${t('restart_to_apply')}</div><button class="update-btn" onclick="doRestart()" style="margin-top:6px">${t('restart')}</button>` : ''}
+        </div>
+        <div class="s-section" style="margin-top:12px">${t('changelog')}</div>
+        <div style="font-size:12px;color:var(--text-tertiary);white-space:pre-line;line-height:1.7;font-family:var(--ui)">${t('changelog_text')}</div>`;
+      break;
+    case 'about':
+      const isMac = navigator.platform?.includes('Mac');
+      const upSec = Math.floor(performance.now() / 1000);
+      html = `<div class="s-section">${t('set_about')}</div>
+        <div style="text-align:center;padding:20px 0">
+          <div style="display:inline-block;position:relative">
+            <div style="position:absolute;inset:-12px;border-radius:50%;background:radial-gradient(circle,rgba(96,165,250,0.15),transparent 70%);pointer-events:none"></div>
+            <svg viewBox="0 0 80 80" fill="none" width="88" height="88" style="filter:drop-shadow(0 6px 28px rgba(59,130,246,0.4))">
+              <defs>
+                <linearGradient id="aboutGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#1e4080"/><stop offset="100%" stop-color="#0d2248"/></linearGradient>
+                <filter id="aboutGlow"><feGaussianBlur stdDeviation="2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+              </defs>
+              <rect width="80" height="80" rx="20" fill="url(#aboutGrad)"/>
+              <rect x="1" y="1" width="78" height="78" rx="19" fill="none" stroke="rgba(96,165,250,0.15)" stroke-width="1"/>
+              <path d="M24 41L34.5 52L57 28" stroke="#60a5fa" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" filter="url(#aboutGlow)"/>
+            </svg>
+          </div>
+          <div style="font-size:20px;color:var(--text-primary);font-weight:300;margin-top:12px;font-family:var(--ui)">${t('os_name')}</div>
+          <div style="font-size:12px;color:var(--text-muted);font-family:var(--ui);margin-top:2px">${t('version')} 1.3.0</div>
+          <div style="font-size:10px;color:var(--text-muted);font-family:var(--mono);margin-top:3px;opacity:0.6">${t('build')} ${t('build_number')}</div>
+        </div>
+        ${info(t('kernel'), 'Linux 6.6.0-kontur aarch64')}
+        ${info(t('platform'), navigator.platform || 'Linux aarch64')}
+        ${info(t('cores'), (navigator.hardwareConcurrency || 4) + ' ' + t('cores_label'))}
+        ${info(t('memory'), (navigator.deviceMemory || 8) + ' GB')}
+        ${info(t('ui_font'), isMac ? 'SF Pro (system)' : 'system-ui')}
+        ${info(t('mono_font'), isMac ? 'SF Mono' : 'Menlo / Monaco')}
+        ${info(t('uptime_label'), Math.floor(upSec / 3600) + 'h ' + Math.floor((upSec % 3600) / 60) + 'm ' + (upSec % 60) + 's')}`;
+      break;
+  }
+  container.innerHTML = html;
+}
+
+function toggleCfg(key, row) {
+  CFG[key] = !CFG[key];
+  row.querySelector('.s-toggle').className = 's-toggle ' + (CFG[key] ? 'on' : 'off');
+  applySetting(key);
+}
+
+/** Apply a single setting change visually */
+function applySetting(key) {
+  const os = document.getElementById('os');
+  switch (key) {
+    case 'darkMode':
+      if (CFG.darkMode) os.classList.remove('light-theme');
+      else os.classList.add('light-theme');
+      break;
+    case 'nightShift':
+      os.style.filter = CFG.nightShift
+        ? `brightness(${CFG.bright/100}) sepia(0.3) saturate(1.2)`
+        : `brightness(${CFG.bright/100})`;
+      break;
+    case 'wifi':
+      document.getElementById('mb-wifi').style.opacity = CFG.wifi ? '1' : '0.25';
+      // Re-render network page if open
+      if (currentSettingsPage === 'network') {
+        const wc = document.getElementById('settings-content');
+        if (wc) renderSettingsPage(wc, 'network');
+      }
+      break;
+    case 'bluetooth':
+      if (currentSettingsPage === 'network') {
+        const wc = document.getElementById('settings-content');
+        if (wc) renderSettingsPage(wc, 'network');
+      }
+      break;
+    case 'notif':
+      document.getElementById('mb-notif-btn').style.opacity = CFG.notif ? '1' : '0.25';
+      break;
+    case 'dnd':
+      document.getElementById('mb-notif-btn').style.color = CFG.dnd ? 'var(--purple)' : '';
+      break;
+    case 'anim':
+      os.style.transition = CFG.anim ? '' : 'none';
+      document.querySelectorAll('.win, .dock-icon, .s-toggle, .s-knob, .smon-bar-fill').forEach(el => {
+        el.style.transition = CFG.anim ? '' : 'none';
+      });
+      break;
+    case 'transparency':
+      document.querySelectorAll('#menubar,#dockbar,.win-titlebar,#notif-panel,.ctx-menu,.mb-dropdown,.dialog-box,.dock-tip').forEach(el => {
+        el.style.backdropFilter = CFG.transparency ? '' : 'none';
+        el.style.webkitBackdropFilter = CFG.transparency ? '' : 'none';
+      });
+      break;
+    case 'dockAutohide':
+      const dock = document.getElementById('dock');
+      if (CFG.dockAutohide) {
+        dock.style.opacity = '0';
+        dock.style.transform = 'translateX(-50%) translateY(20px)';
+        dock.style.transition = 'opacity 0.3s, transform 0.3s';
+        dock.onmouseenter = () => { dock.style.opacity = '1'; dock.style.transform = 'translateX(-50%)'; };
+        dock.onmouseleave = () => { dock.style.opacity = '0'; dock.style.transform = 'translateX(-50%) translateY(20px)'; };
+      } else {
+        dock.style.opacity = '1';
+        dock.style.transform = 'translateX(-50%)';
+        dock.onmouseenter = null;
+        dock.onmouseleave = null;
+      }
+      break;
+    case 'highContrast':
+      os.classList.toggle('high-contrast', CFG.highContrast);
+      break;
+    case 'reduceMotion':
+      os.classList.toggle('reduce-motion', CFG.reduceMotion);
+      break;
+    case 'largerCursor':
+      os.style.cursor = CFG.largerCursor ? 'url("data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'32\' height=\'32\'><circle cx=\'16\' cy=\'16\' r=\'14\' fill=\'white\' stroke=\'black\' stroke-width=\'2\'/></svg>") 16 16, auto' : '';
+      break;
+  }
+}
+
+/** Apply brightness/volume sliders */
+function applySlider(key, value) {
+  CFG[key] = value;
+  const os = document.getElementById('os');
+  switch (key) {
+    case 'bright':
+      const filter = CFG.nightShift
+        ? `brightness(${value/100}) sepia(0.3) saturate(1.2)`
+        : `brightness(${value/100})`;
+      os.style.filter = filter;
+      break;
+    case 'fontSize':
+      os.style.fontSize = value + 'px';
+      break;
+    case 'dockSize':
+      document.querySelectorAll('.dock-icon').forEach(d => {
+        d.style.width = value + 'px';
+        d.style.height = value + 'px';
+      });
+      break;
+  }
+}
+
+function applyTheme() { applySetting('darkMode'); }
+
+function setAccentColor(color) {
+  CFG.accentColor = color;
+  document.documentElement.style.setProperty('--accent', color);
+  document.querySelectorAll('.accent-swatch').forEach(s => s.classList.toggle('active', s.style.background === color));
+}
+
+function setWallpaper(id, bg) {
+  CFG.wallpaper = id;
+  CFG.wallpaperCustom = null;
+  CFG.wallpaperCustomName = null;
+  document.getElementById('wallpaper').style.background = bg || id;
+  document.getElementById('wallpaper').style.backgroundSize = '';
+  if (currentSettingsPage === 'appearance') {
+    const wc = document.getElementById('settings-content');
+    if (wc) renderSettingsPage(wc, 'appearance');
+  }
+}
+
+function handleWallpaperFile(input) {
+  const file = input.files?.[0];
+  if (!file || !file.type.startsWith('image/')) return;
+  const url = URL.createObjectURL(file);
+  CFG.wallpaper = 'custom';
+  CFG.wallpaperCustom = url;
+  CFG.wallpaperCustomName = file.name;
+  const wp = document.getElementById('wallpaper');
+  wp.style.background = `url('${url}') center/cover no-repeat`;
+  // Refresh settings page to show preview
+  if (currentSettingsPage === 'appearance') {
+    const wc = document.getElementById('settings-content');
+    if (wc) renderSettingsPage(wc, 'appearance');
+  }
+  // Reset input so same file can be re-selected
+  input.value = '';
+}
+
+function clearCustomWallpaper() {
+  CFG.wallpaperCustom = null;
+  CFG.wallpaperCustomName = null;
+  setWallpaper('default-dark', 'linear-gradient(135deg,#090c17,#0d1225)');
+}
+
+/* ── Wallpaper Picker Window ─────────────────────────────── */
+let wpPickerCwd = '/';
+const IMG_EXTS = ['png','jpg','jpeg','gif','webp','bmp','svg','tiff'];
+
+function openWallpaperPicker() {
+  wpPickerCwd = (window.IS_NATIVE && window.nativeBridge) ? '~/Pictures' : '/Pictures';
+  const id = 'wppicker';
+  if (openWindows[id]) { openWindows[id].style.zIndex = ++windowZIndex; return; }
+
+  const win = document.createElement('div');
+  win.className = 'win opening';
+  win.style.cssText = `left:80px;top:40px;width:460px;height:380px;z-index:${++windowZIndex}`;
+  win.innerHTML = `<div class="win-titlebar">
+    <div class="win-lights"><div class="wl wl-close" onclick="closeWin('${id}')"></div><div class="wl wl-min"></div><div class="wl wl-max"></div></div>
+    <span class="win-title">${t('choose_from_files')}</span>
+  </div>
+  <div class="win-body" id="wc_${id}" style="display:flex;flex-direction:column;gap:8px"></div>`;
+  document.getElementById('os').appendChild(win);
+  openWindows[id] = win;
+  enableDrag(win, win.querySelector('.win-titlebar'));
+  requestAnimationFrame(() => requestAnimationFrame(() => win.classList.remove('opening')));
+  renderWpPicker();
+}
+
+function renderWpPicker() {
+  const wc = document.getElementById('wc_wppicker');
+  if (!wc) return;
+
+  // Check if running native
+  if (window.IS_NATIVE && window.nativeBridge) {
+    wc.innerHTML = `<div style="color:var(--text-muted);font-size:12px;padding:8px">${t('loading')}</div>`;
+    nativeBridge.call('listDir', { path: wpPickerCwd }).then(data => {
+      if (data.error) { wc.innerHTML = `<div style="padding:20px;color:var(--red);font-size:12px">${data.error}</div>`; return; }
+      wc.innerHTML = wpPickerHTML(wpPickerCwd, data.items || [], true);
+    });
+  } else {
+    // Virtual FS mode
+    const node = FS[wpPickerCwd] || FS['/'];
+    const items = (node.children || []).map(name => {
+      const cp = (wpPickerCwd === '/' ? '' : wpPickerCwd) + '/' + name;
+      const ch = FS[cp] || {};
+      return { name, isDir: ch.type === 'dir', path: cp };
+    });
+    wc.innerHTML = wpPickerHTML(wpPickerCwd, items, false);
+  }
+}
+
+function wpPickerHTML(path, items, isNative) {
+  const parts = (isNative ? path.replace('~', '').replace(/^\//, '') : path.replace(/^\//, '')).split('/').filter(Boolean);
+  const root = isNative ? '~' : '/';
+
+  // Breadcrumb
+  let bc = `<div class="file-path" style="padding:2px 0 6px">
+    <span class="fp-btn" onclick="wpPickerNav('${root}')">${isNative ? '~' : '~'}</span>`;
+  for (let i = 0; i < parts.length; i++) {
+    const sub = isNative ? '~/' + parts.slice(0, i + 1).join('/') : '/' + parts.slice(0, i + 1).join('/');
+    bc += `<span style="opacity:.3">›</span><span class="fp-btn" onclick="wpPickerNav('${sub}')">${parts[i]}</span>`;
+  }
+  bc += '</div>';
+
+  // Filter: show directories + image files only
+  const filtered = items.filter(item => {
+    if (item.isDir) return true;
+    const ext = item.name.split('.').pop().toLowerCase();
+    return IMG_EXTS.includes(ext);
+  });
+
+  // Back button
+  let toolbar = '<div style="display:flex;gap:6px;margin-bottom:4px">';
+  if (path !== root) {
+    const parent = isNative
+      ? (path.split('/').slice(0, -1).join('/') || '~')
+      : ('/' + parts.slice(0, -1).join('/') || '/');
+    toolbar += `<button class="files-btn" onclick="wpPickerNav('${parent}')" title="${t('back')}"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8 2L4 6L8 10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg> ${t('back')}</button>`;
+  }
+  // Quick jump to Pictures
+  const picPath = isNative ? '~/Pictures' : '/Pictures';
+  toolbar += `<button class="files-btn" onclick="wpPickerNav('${picPath}')">📷 Pictures</button>`;
+  const dlPath = isNative ? '~/Downloads' : '/Downloads';
+  toolbar += `<button class="files-btn" onclick="wpPickerNav('${dlPath}')">⬇ Downloads</button>`;
+  // Import from device button
+  toolbar += `<button class="files-btn" style="margin-left:auto" onclick="wpPickerImport()">${CFG.lang === 'ru' ? 'С устройства...' : 'From device...'}</button>`;
+  toolbar += '</div>';
+
+  if (filtered.length === 0) {
+    return bc + toolbar + `<div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:12px">${CFG.lang === 'ru' ? 'Нет изображений' : 'No images found'}</div>`;
+  }
+
+  const rows = filtered.map(item => {
+    const fullPath = item.path || ((path === '/' ? '' : path) + '/' + item.name);
+    const ext = item.name.split('.').pop().toLowerCase();
+    const isImage = IMG_EXTS.includes(ext);
+
+    if (item.isDir) {
+      return `<div class="file-row" ondblclick="wpPickerNav('${fullPath}')">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="5" width="14" height="9" rx="1.5" fill="#2563eb"/><path d="M1 6.5V5.5C1 4.7 1.6 4 2.4 4H6.5L8 6.5H1Z" fill="#60a5fa"/></svg>
+        <span class="file-name">${item.name}/</span>
+      </div>`;
+    }
+
+    return `<div class="file-row" ondblclick="wpPickerSelect('${fullPath}')" style="cursor:pointer">
+      <div style="width:26px;height:26px;border-radius:6px;background:#1e293b;display:flex;align-items:center;justify-content:center">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="12" rx="2" fill="#0e4429"/><path d="M3 10L5.5 6L7.5 9L9 7L11 10H3Z" fill="#34d399"/><circle cx="9.5" cy="4.5" r="1.5" fill="#fbbf24"/></svg>
+      </div>
+      <span class="file-name">${item.name}</span>
+      <span class="file-meta">${item.size || ''}</span>
+    </div>`;
+  }).join('');
+
+  return bc + toolbar + `<div style="flex:1;overflow-y:auto">${rows}</div>`;
+}
+
+function wpPickerNav(path) {
+  wpPickerCwd = path;
+  renderWpPicker();
+}
+
+function wpPickerSelect(path) {
+  // In native mode, read the file as data and set as wallpaper
+  if (window.IS_NATIVE && window.nativeBridge) {
+    // For native: we can't directly read image as data URL from bridge easily,
+    // so use the file:// URL path
+    const realPath = path.replace('~', '');
+    CFG.wallpaper = 'custom';
+    CFG.wallpaperCustom = 'about:blank'; // placeholder
+    CFG.wallpaperCustomName = path.split('/').pop();
+    // Use nativeBridge to tell Swift to set wallpaper from path
+    nativeBridge.fire('setWallpaperFromFile', { path: path });
+    closeWin('wppicker');
+  } else {
+    // Virtual FS — files don't have real image data, just show the name
+    CFG.wallpaper = 'custom';
+    CFG.wallpaperCustom = null;
+    CFG.wallpaperCustomName = path.split('/').pop();
+    // Apply a gradient based on filename hash
+    const hash = path.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+    const hue = hash % 360;
+    document.getElementById('wallpaper').style.background = `linear-gradient(135deg, hsl(${hue},30%,8%), hsl(${(hue+40)%360},25%,12%), hsl(${hue},30%,6%))`;
+    closeWin('wppicker');
+  }
+  // Refresh settings appearance page if open
+  if (currentSettingsPage === 'appearance') {
+    const wc = document.getElementById('settings-content');
+    if (wc) renderSettingsPage(wc, 'appearance');
+  }
+}
+
+function wpPickerImport() {
+  // Trigger the hidden native file input as fallback
+  document.getElementById('wallpaper-file-input').click();
+  // Close picker after selecting
+  setTimeout(() => { if (CFG.wallpaperCustom) closeWin('wppicker'); }, 500);
+}
+
+function checkForUpdate() {
+  CFG.updateState = 'checking';
+  const wc = document.getElementById('settings-content');
+  if (wc) renderSettingsPage(wc, 'update');
+  setTimeout(() => {
+    CFG.updateState = 'available';
+    if (currentSettingsPage === 'update') {
+      const wc2 = document.getElementById('settings-content');
+      if (wc2) renderSettingsPage(wc2, 'update');
+    }
+  }, 2000);
+}
+
+function installUpdate() {
+  CFG.updateState = 'installing';
+  const wc = document.getElementById('settings-content');
+  if (wc) renderSettingsPage(wc, 'update');
+  let progress = 0;
+  const interval = setInterval(() => {
+    progress += Math.random() * 15 + 3;
+    if (progress >= 100) {
+      progress = 100;
+      clearInterval(interval);
+      setTimeout(() => {
+        CFG.updateState = 'done';
+        if (currentSettingsPage === 'update') {
+          const wc2 = document.getElementById('settings-content');
+          if (wc2) renderSettingsPage(wc2, 'update');
+        }
+      }, 500);
+    }
+    const fill = document.getElementById('update-fill');
+    if (fill) fill.style.width = progress + '%';
+  }, 200);
+}
+
+// After settings window opens, render initial page
+const _origOpenWin = openWin;
+// Handled inline: after openWin renders settingsHTML, we trigger page render
+// We use MutationObserver or just setTimeout
+function postSettingsRender() {
+  setTimeout(() => {
+    const wc = document.getElementById('settings-content');
+    if (wc) renderSettingsPage(wc, currentSettingsPage);
+  }, 10);
+}
+
+
+/* ─── 20. LAUNCHER ───────────────────────────────────────── */
+function openLauncher() {
+  launcherVisible = true; launcherSelection = 0;
+  document.getElementById('launcher').classList.add('show');
+  document.getElementById('launcher-input').value = '';
+  filterLauncher('');
+  setTimeout(() => document.getElementById('launcher-input').focus(), 30);
+}
+function closeLauncher() {
+  launcherVisible = false;
+  document.getElementById('launcher').classList.remove('show');
+}
+function filterLauncher(q) {
+  const apps = getApps();
+  const filtered = q ? apps.filter(a => t(a.nameKey).toLowerCase().includes(q.toLowerCase())) : apps;
+  launcherFiltered = filtered; launcherSelection = 0;
+  document.getElementById('launcher-results').innerHTML = filtered.map((a, i) =>
+    `<div class="lr-item${i === 0 ? ' selected' : ''}" onclick="openWin('${a.id}');closeLauncher()">
+      <div class="lr-icon" style="background:${a.bg}">${appIcon(a.id, 18)}</div>
+      <span class="lr-name">${t(a.nameKey)}</span>
+      <span class="lr-sub">${t(a.subKey)}</span>
+    </div>`
+  ).join('');
+}
+function launcherKey(e) {
+  const els = document.querySelectorAll('.lr-item');
+  if (e.key === 'ArrowDown') launcherSelection = Math.min(launcherSelection + 1, launcherFiltered.length - 1);
+  else if (e.key === 'ArrowUp') launcherSelection = Math.max(launcherSelection - 1, 0);
+  else if (e.key === 'Enter') { if (launcherFiltered[launcherSelection]) { openWin(launcherFiltered[launcherSelection].id); closeLauncher(); } return; }
+  else return;
+  els.forEach((el, i) => el.classList.toggle('selected', i === launcherSelection));
+  e.preventDefault();
+}
+
+
+/* ─── 21. CONTEXT MENU ───────────────────────────────────── */
+function showCtx(e) {
+  e.preventDefault();
+  const m = document.getElementById('ctx-menu');
+  const r = document.getElementById('os').getBoundingClientRect();
+  let x = e.clientX - r.left, y = e.clientY - r.top;
+  if (x + 190 > r.width) x = r.width - 195;
+  if (y + 160 > r.height) y = r.height - 165;
+  m.style.left = x + 'px'; m.style.top = y + 'px';
+  m.classList.add('show');
+}
+function closeCtx() { document.getElementById('ctx-menu').classList.remove('show'); }
+function ctxAction(a) {
+  closeCtx();
+  if (a === 'launch') openLauncher();
+  else if (a === 'settings') openWin('settings');
+  else if (a === 'wall') {
+    const walls = [
+      ['deep-blue','linear-gradient(135deg,#0a1628,#162d50,#0a1628)'],
+      ['forest','linear-gradient(135deg,#0a1a10,#0f2b18,#081a0c)'],
+      ['midnight','linear-gradient(135deg,#0d0520,#1a0a35,#0d0520)'],
+      ['aurora','linear-gradient(135deg,#0a1a20,#0d2030,#081520)'],
+      ['nebula','linear-gradient(135deg,#140d1e,#1e1030,#0d081a)'],
+    ];
+    const pick = walls[Math.floor(Math.random() * walls.length)];
+    setWallpaper(pick[0], pick[1]);
+  }
+  else if (a === 'new_folder') { openWin('files'); setTimeout(filesNewFolder, 200); }
+  else if (a === 'new_file') { openWin('files'); setTimeout(filesNewFile, 200); }
+}
+
+
+/* ─── 22. GLOBAL EVENTS ─────────────────────────────────── */
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === ' ') { e.preventDefault(); launcherVisible ? closeLauncher() : openLauncher(); }
+  if (e.key === 'Escape') { closeLauncher(); closeCtx(); closeAllMenus(); }
+});
+
+document.getElementById('os').addEventListener('mousedown', e => {
+  if (launcherVisible && !e.target.closest('#launcher-box')) closeLauncher();
+  if (!e.target.closest('#notif-panel') && !e.target.closest('#mb-notif-btn')) document.getElementById('notif-panel').classList.remove('show');
+  if (!e.target.closest('#ctx-menu')) closeCtx();
+  if (!e.target.closest('.mb-dropdown') && !e.target.closest('.mb-item') && !e.target.closest('.mb-logo')) closeAllMenus();
+});
+
+document.getElementById('mb-notif-btn').onclick = () => document.getElementById('notif-panel').classList.toggle('show');
+
+
+/* ─── 23. CLOCK TICK ─────────────────────────────────────── */
+function globalTick() {
+  const n = new Date();
+  document.getElementById('mb-clock').textContent = String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
+  tickClock();
+}
+
+
+/* ─── 24. INITIALIZATION ─────────────────────────────────── */
+function boot() {
+  fsInit();
+  buildMenus();
+  buildDesktopIcons();
+  buildDock();
+  buildNotifPanel();
+  buildCtxMenu();
+  applyLang();
+  globalTick();
+  setInterval(globalTick, 1000);
+
+  // Generate stars
+  const wp = document.getElementById('wallpaper');
+  for (let i = 0; i < 55; i++) {
+    const star = document.createElement('div');
+    star.className = 'star';
+    const sz = Math.random() < 0.75 ? 1 : 1.5;
+    star.style.cssText = `width:${sz}px;height:${sz}px;left:${Math.random() * 100}%;top:${Math.random() * 100}%;opacity:${0.15 + Math.random() * 0.45}`;
+    wp.appendChild(star);
+  }
+
+  // Override openWin to trigger settings page render
+  const origRender = renderWinContent;
+  renderWinContent = function(id, opts) {
+    origRender(id, opts);
+    if (id === 'settings') postSettingsRender();
+  };
+}
+
+boot();
+
+</script>
+
+<!-- ============================================================
+     NATIVE BRIDGE INTEGRATION
+     When running inside Xcode WKWebView (window.IS_NATIVE = true),
+     overrides virtual FS, fake metrics, and settings with real macOS data.
+     When opened as standalone HTML, this entire block is skipped.
+     ============================================================ -->
+<script>
+(function() {
+  // Wait for native bridge to be injected
+  function waitForNative(cb) {
+    if (window.IS_NATIVE && window.nativeBridge) { cb(); return; }
+    var attempts = 0;
+    var check = setInterval(function() {
+      if (window.IS_NATIVE && window.nativeBridge) { clearInterval(check); cb(); }
+      if (++attempts > 50) clearInterval(check); // give up after 5s
+    }, 100);
+  }
+
+  waitForNative(function() {
+    console.log('[KonturOS] Native bridge detected — activating real macOS integration');
+
+    // ══════════════════════════════════════════════════════════
+    // 1. BATTERY — update menubar battery from macOS
+    // ══════════════════════════════════════════════════════════
+    window.onNativeBattery = function(bat) {
+      var fill = document.getElementById('mb-battery-fill');
+      var pct = document.getElementById('mb-battery-pct');
+      if (!fill || !pct) return;
+      if (!bat.hasBattery) {
+        document.getElementById('mb-battery').style.display = 'none';
+        return;
+      }
+      document.getElementById('mb-battery').style.display = 'flex';
+      var level = Math.max(0, Math.min(100, bat.level));
+      var w = Math.round(level / 100 * 11); // max fill width = 11
+      fill.setAttribute('width', String(w));
+      var color = level < 20 ? '#f87171' : level < 50 ? '#fbbf24' : 'rgba(255,255,255,0.35)';
+      if (bat.charging) color = '#4ade80';
+      fill.setAttribute('fill', color);
+      pct.textContent = level + '%';
+      pct.style.color = color;
+    };
+
+    // ══════════════════════════════════════════════════════════
+    // 2. FILESYSTEM — override to use real macOS files
+    // ══════════════════════════════════════════════════════════
+    var nativeFsCwd = '~';
+
+    // Override the FS initialization (no-op for native)
+    window.fsInit = function() {};
+
+    // Override fsNav to use native bridge
+    window.fsNav = function(path) {
+      nativeFsCwd = path || '~';
+      selectedFile = null;
+      nativeRefreshFiles(false);
+    };
+
+    function nativeRefreshFiles(keepScroll) {
+      var wc = document.getElementById('wc_files');
+      if (!wc) return;
+      var scrollPos = keepScroll ? wc.scrollTop : 0;
+      wc.innerHTML = '<div style="padding:20px;color:var(--text-muted);font-size:12px">' + t('loading') + '</div>';
+      nativeBridge.call('listDir', { path: nativeFsCwd }).then(function(data) {
+        if (data.error) { wc.innerHTML = '<div style="padding:20px;color:var(--red);font-size:12px">' + data.error + '</div>'; return; }
+        wc.innerHTML = nativeFilesHTML(nativeFsCwd, data);
+        if (keepScroll) requestAnimationFrame(function() { wc.scrollTop = scrollPos; });
+      });
+    }
+    window.refreshFiles = nativeRefreshFiles;
+
+    function nativeFilesHTML(path, data) {
+      var parts = path.replace(/^~\/?/, '').split('/').filter(Boolean);
+      var bc = '<div class="file-path"><span class="fp-btn" onclick="fsNav(\'~\')">~</span>';
+      for (var i = 0; i < parts.length; i++) {
+        var sub = '~/' + parts.slice(0, i + 1).join('/');
+        bc += '<span style="opacity:.3">›</span><span class="fp-btn" onclick="fsNav(\'' + sub + '\')">' + parts[i] + '</span>';
+      }
+      bc += '</div>';
+
+      var toolbar = '<div class="files-toolbar">';
+      if (path !== '~') toolbar += '<button class="files-btn" onclick="fsNav(\'' + parentPath(path) + '\')" title="' + t('back') + '"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8 2L4 6L8 10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button>';
+      toolbar += '<button class="files-btn" onclick="nativeNewFolder()">+ ' + t('files_new_folder') + '</button>';
+      toolbar += '<button class="files-btn" onclick="nativeNewFile()">+ ' + t('files_new_file') + '</button>';
+      if (selectedFile) {
+        toolbar += '<button class="files-btn" onclick="fsCopy()">' + t('copy_file') + '</button>';
+        toolbar += '<button class="files-btn" onclick="fsCut()">' + t('cut_file') + '</button>';
+        toolbar += '<button class="files-btn" onclick="filesRename()">' + t('files_rename') + '</button>';
+        toolbar += '<button class="files-btn" style="color:var(--red)" onclick="filesDelete()">' + t('files_delete') + '</button>';
+      }
+      if (fsClipboard.path) toolbar += '<button class="files-btn" style="color:var(--accent)" onclick="fsPaste()">' + t('paste_file') + '</button>';
+      toolbar += '<button class="files-btn" style="margin-left:auto" onclick="nativeOpenInFinder()">' + t('open_in_finder') + '</button>';
+      toolbar += '</div>';
+
+      if (!data.items || data.items.length === 0) {
+        return bc + toolbar + '<div style="padding:40px;text-align:center;color:var(--text-muted);font-size:12px">' + t('empty_folder') + '</div>';
+      }
+
+      var rows = data.items.map(function(item) {
+        var fullPath = (path === '~' ? '~' : path) + '/' + item.name;
+        var sel = selectedFile === fullPath ? ' selected' : '';
+        var icon = item.isDir
+          ? '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="5" width="14" height="9" rx="1.5" fill="#2563eb"/><path d="M1 6.5V5.5C1 4.7 1.6 4 2.4 4H6.5L8 6.5H1Z" fill="#60a5fa"/></svg>'
+          : getFileIcon(item.name);
+        var onclick = item.isDir
+          ? 'fsNav(\'' + fullPath + '\')'
+          : 'nativeOpenFile(\'' + fullPath + '\')';
+        return '<div class="file-row' + sel + '" onclick="selectFile(\'' + fullPath + '\')" ondblclick="' + onclick + '">' +
+          '<div style="width:26px;height:26px;border-radius:6px;background:' + (item.isDir ? '#112244' : '#1e293b') + ';display:flex;align-items:center;justify-content:center;flex-shrink:0">' + icon + '</div>' +
+          '<span class="file-name">' + item.name + (item.isDir ? '/' : '') + '</span>' +
+          '<span class="file-meta">' + (item.isDir ? t('folder') : (item.size || '')) + '</span></div>';
+      }).join('');
+
+      return bc + toolbar + '<div>' + rows + '</div>';
+    }
+
+    function parentPath(p) {
+      if (p === '~' || p === '~/') return '~';
+      var parts = p.split('/');
+      parts.pop();
+      return parts.join('/') || '~';
+    }
+
+    window.nativeOpenFile = function(path) {
+      nativeBridge.call('readFile', { path: path }).then(function(data) {
+        if (data.error || data.binary) return;
+        openWin('editor', { path: path, content: data.content || '' });
+      });
+    };
+
+    // Override editor save to write to real filesystem
+    var origEditorSave = window.editorSave;
+    window.editorSave = function() {
+      var ta = document.getElementById('editor-textarea');
+      if (!ta || !editorCurrentPath) return;
+      if (window.IS_NATIVE) {
+        nativeBridge.call('writeFile', { path: editorCurrentPath, content: ta.value }).then(function(res) {
+          var status = document.getElementById('editor-status');
+          if (status) {
+            status.textContent = res.error ? '✗ ' + res.error : '✓ ' + t('editor_saved');
+            status.style.color = res.error ? 'var(--red)' : 'var(--green)';
+            status.style.opacity = '1';
+            setTimeout(function() { status.style.opacity = '0'; }, 2000);
+          }
+        });
+      } else if (origEditorSave) {
+        origEditorSave();
+      }
+    };
+
+    window.nativeNewFolder = async function() {
+      var res = await showDialog({ title: t('files_new_folder'), input: true, buttons: [{ label: t('cancel') }, { label: t('create'), cls: 'primary' }] });
+      if (res && res.btn === 1 && res.value && res.value.trim()) {
+        var newPath = nativeFsCwd + '/' + res.value.trim();
+        await nativeBridge.call('createDir', { path: newPath });
+        nativeRefreshFiles();
+      }
+    };
+
+    window.nativeNewFile = async function() {
+      var res = await showDialog({ title: t('files_new_file'), input: true, inputValue: 'untitled.txt', buttons: [{ label: t('cancel') }, { label: t('create'), cls: 'primary' }] });
+      if (res && res.btn === 1 && res.value && res.value.trim()) {
+        var newPath = nativeFsCwd + '/' + res.value.trim();
+        await nativeBridge.call('createFile', { path: newPath, content: '' });
+        nativeRefreshFiles();
+      }
+    };
+
+    window.nativeOpenInFinder = function() {
+      nativeBridge.fire('openInFinder', { path: nativeFsCwd });
+    };
+
+    // Override selectFile for native
+    window.selectFile = function(path) {
+      selectedFile = selectedFile === path ? null : path;
+      nativeRefreshFiles(true);
+    };
+
+    // Override delete/rename for native
+    window.filesDelete = async function() {
+      if (!selectedFile) return;
+      var name = selectedFile.split('/').pop();
+      var res = await showDialog({ title: t('files_delete'), text: t('delete_confirm') + '<br><b>' + name + '</b>', buttons: [{ label: t('cancel') }, { label: t('delete_btn'), cls: 'danger' }] });
+      if (res && res.btn === 1) {
+        await nativeBridge.call('deleteItem', { path: selectedFile });
+        selectedFile = null;
+        nativeRefreshFiles();
+      }
+    };
+
+    window.filesRename = async function() {
+      if (!selectedFile) return;
+      var oldName = selectedFile.split('/').pop();
+      var res = await showDialog({ title: t('rename_title'), input: true, inputValue: oldName, buttons: [{ label: t('cancel') }, { label: t('ok'), cls: 'primary' }] });
+      if (res && res.btn === 1 && res.value && res.value.trim()) {
+        var newPath = parentPath(selectedFile) + '/' + res.value.trim();
+        await nativeBridge.call('renameItem', { from: selectedFile, to: newPath });
+        selectedFile = null;
+        nativeRefreshFiles();
+      }
+    };
+
+
+    // File clipboard operations
+    window.fsCopy = function() {
+      if (!selectedFile) return;
+      fsClipboard = { path: selectedFile, op: 'copy' };
+      nativeRefreshFiles(true);
+    };
+    window.fsCut = function() {
+      if (!selectedFile) return;
+      fsClipboard = { path: selectedFile, op: 'cut' };
+      nativeRefreshFiles(true);
+    };
+    window.fsPaste = async function() {
+      if (!fsClipboard.path) return;
+      var srcName = fsClipboard.path.split('/').pop();
+      var destPath = nativeFsCwd + '/' + srcName;
+      if (fsClipboard.op === 'copy') {
+        // Read then write for copy
+        var data = await nativeBridge.call('readFile', { path: fsClipboard.path });
+        if (data && !data.error && !data.binary) {
+          await nativeBridge.call('createFile', { path: destPath, content: data.content || '' });
+        }
+      } else if (fsClipboard.op === 'cut') {
+        await nativeBridge.call('renameItem', { from: fsClipboard.path, to: destPath });
+        fsClipboard = { path: null, op: null };
+      }
+      selectedFile = null;
+      nativeRefreshFiles(false);
+    };
+
+    // Override menu actions
+    window.menuNewFolder = window.nativeNewFolder;
+    window.menuNewFile = window.nativeNewFile;
+
+    // Override renderWinContent for files to use native
+    var origRenderWin = window.renderWinContent;
+    window.renderWinContent = function(id, opts) {
+      if (id === 'files') {
+        var wc = document.getElementById('wc_files');
+        if (wc) { nativeRefreshFiles(); }
+        return;
+      }
+      origRenderWin(id, opts);
+      if (id === 'settings') postSettingsRender();
+    };
+
+    // ══════════════════════════════════════════════════════════
+    // 3. SYSTEM MONITOR — real macOS metrics
+    // ══════════════════════════════════════════════════════════
+    window.onNativeMetrics = function(data) {
+      if (!data) return;
+
+      // Update system monitor cards if window is open
+      var cpu = data.cpu || {};
+      var mem = data.mem || {};
+      var bat = data.battery || {};
+
+      var cpuPct = Math.round(cpu.usage || 0);
+      var memUsed = mem.usedMB || 0;
+      var memTotal = mem.totalMB || 1;
+      var memPct = Math.round(mem.percent || 0);
+
+      // Update cards
+      var updCard = function(id, val, pct, color, sub) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        var v = el.querySelector('.smon-val'); if (v) v.textContent = val;
+        var s = el.querySelector('.smon-sub'); if (s) s.textContent = sub;
+        var f = el.querySelector('.smon-bar-fill');
+        if (f) { f.style.width = pct + '%'; f.style.background = color; }
+      };
+
+      var cpuColor = cpuPct > 70 ? 'var(--red)' : cpuPct > 40 ? 'var(--yellow)' : 'var(--green)';
+      updCard('scpu', cpuPct + '%', cpuPct, cpuColor, (cpu.cores || 0) + ' ' + t('cores_label'));
+      updCard('smem', memUsed + ' MB', memPct, 'var(--accent)', t('of_total') + ' ' + memTotal + ' MB');
+
+      // Temperature — use battery temp or estimate
+      var temp = data.temperature || (42 + Math.random() * 20);
+      updCard('stemp', Math.round(temp) + '°C', Math.min(100, temp * 1.3),
+        temp > 70 ? 'var(--red)' : temp > 55 ? 'var(--yellow)' : 'var(--purple)', t('normal_temp'));
+
+      var sys = data.system || {};
+      var upSec = sys.uptimeSec || Math.floor(performance.now() / 1000);
+      updCard('supt', Math.floor(upSec / 3600) + 'h ' + Math.floor((upSec % 3600) / 60) + 'm', 30, 'var(--yellow)', sys.platform || '');
+
+      // Update graphs
+      cpuH.push(cpuPct); memH.push(memPct);
+      if (cpuH.length > 28) cpuH.shift();
+      if (memH.length > 28) memH.shift();
+      drawGraph('gcpu', cpuH, '#34d399');
+      drawGraph('gmem', memH, '#3b82f6');
+
+      // Update battery in menubar
+      if (bat.hasBattery && window.onNativeBattery) {
+        window.onNativeBattery(bat);
+      }
+    };
+
+    // Override sysmon open to start native metrics stream
+    var origOpenWin = window.openWin;
+    window.openWin = function(id, opts) {
+      origOpenWin(id, opts);
+      if (id === 'sysmon') {
+        // Stop fake timers, start real metrics
+        var w = openWindows['sysmon'];
+        if (w && w._t) { clearInterval(w._t); w._t = null; }
+        if (w && w._ai) { clearInterval(w._ai); w._ai = null; }
+        nativeBridge.fire('startMetrics');
+        // Also do initial AI analysis with real data
+        nativeBridge.call('getSystemMetrics').then(function(d) {
+          window.onNativeMetrics(d);
+          fetchAI({
+            cpu: Math.round(d.cpu.usage || 0),
+            mem: d.mem.usedMB || 0,
+            memTotal: d.mem.totalMB || 0,
+            temp: 50,
+            cores: d.cpu.cores || 0
+          });
+        });
+      }
+    };
+
+    var origCloseWin = window.closeWin;
+    window.closeWin = function(id) {
+      if (id === 'sysmon') nativeBridge.fire('stopMetrics');
+      origCloseWin(id);
+    };
+
+    // ══════════════════════════════════════════════════════════
+    // 4. SETTINGS — call real macOS APIs
+    // ══════════════════════════════════════════════════════════
+    // Load real settings state on settings open
+    var origSwitchSettings = window.switchSettingsPage;
+    window.switchSettingsPage = function(page) {
+      origSwitchSettings(page);
+      if (['display', 'sound', 'network'].includes(page)) {
+        nativeBridge.call('getSettingsState').then(function(state) {
+          // Update CFG with real values
+          if (state.volume !== undefined) CFG.vol = state.volume;
+          if (state.brightness !== undefined) CFG.bright = state.brightness;
+          if (state.darkMode !== undefined) CFG.darkMode = state.darkMode;
+          // Re-render the page with real values
+          var wc = document.getElementById('settings-content');
+          if (wc) renderSettingsPage(wc, page);
+          // Patch sliders to call native
+          patchSettingsSliders();
+        });
+      }
+    };
+
+    function patchSettingsSliders() {
+      // Find volume slider and patch oninput
+      document.querySelectorAll('.s-slider-row input[type=range]').forEach(function(slider) {
+        var origOninput = slider.oninput;
+        slider.addEventListener('change', function() {
+          var val = parseInt(slider.value);
+          // Determine which slider this is by checking nearby labels
+          var parent = slider.closest('.s-slider-row') || slider.parentElement;
+          var label = parent.previousElementSibling;
+          var labelText = label ? label.textContent.toLowerCase() : '';
+          if (labelText.includes(t('volume').toLowerCase()) || labelText.includes('volume')) {
+            nativeBridge.fire('setVolume', { value: val / 100 });
+          } else if (labelText.includes(t('brightness').toLowerCase()) || labelText.includes('brightness')) {
+            nativeBridge.fire('setBrightness', { value: val / 100 });
+          }
+        });
+      });
+    }
+
+    // Override toggleCfg for native settings
+    var origToggleCfg = window.toggleCfg;
+    window.toggleCfg = function(key, row) {
+      origToggleCfg(key, row);
+      // Send to native
+      if (key === 'darkMode') nativeBridge.fire('setDarkMode', { value: CFG.darkMode });
+    };
+
+    // ══════════════════════════════════════════════════════════
+    // 5. SYSTEM INFO — override About page with real data
+    // ══════════════════════════════════════════════════════════
+    var origRenderSettingsPage = window.renderSettingsPage;
+    window.renderSettingsPage = function(container, page) {
+      origRenderSettingsPage(container, page);
+      if (page === 'about' || page === 'storage' || page === 'network') {
+        // Fetch real data and update
+        nativeBridge.call('getSystemMetrics').then(function(data) {
+          var sys = data.system || {};
+          if (page === 'about') {
+            // Replace the about info with real data
+            var rows = container.querySelectorAll('.s-row');
+            rows.forEach(function(row) {
+              var label = row.querySelector('.s-label');
+              var val = row.querySelector('.s-value');
+              if (!label || !val) return;
+              var lt = label.textContent;
+              if (lt === t('kernel')) val.textContent = 'Darwin ' + sys.os;
+              if (lt === t('platform')) val.textContent = sys.arch || sys.platform;
+              if (lt === t('cores')) val.textContent = sys.cores + ' (' + (sys.cpuName || '').substring(0, 40) + ')';
+              if (lt === t('memory')) val.textContent = Math.round(sys.ramMB / 1024) + ' GB';
+              if (lt === t('uptime_label')) {
+                var u = sys.uptimeSec || 0;
+                val.textContent = Math.floor(u/3600) + 'h ' + Math.floor((u%3600)/60) + 'm';
+              }
+            });
+          }
+          if (page === 'storage' && data.disk) {
+            // Update storage with real disk data
+            var totalEl = container.querySelector('.s-row .s-value');
+            if (totalEl) totalEl.textContent = Math.round(data.disk.totalGB) + ' GB';
+          }
+        });
+        if (page === 'network') {
+          nativeBridge.call('getSettingsState').then(function(state) {
+            var rows = container.querySelectorAll('.s-row');
+            rows.forEach(function(row) {
+              var label = row.querySelector('.s-label');
+              var val = row.querySelector('.s-value');
+              if (!label || !val) return;
+              var lt = label.textContent;
+              if (lt === t('wifi') && state.wifi) val.textContent = state.wifi.connected ? (state.wifi.ssid || t('wifi_on')) : t('wifi_off');
+              if (lt === t('ip_address')) val.textContent = state.ip || 'unknown';
+              if (lt === t('hostname')) val.textContent = state.hostname || 'unknown';
+              if (lt === t('mac_address') && state.wifi) val.textContent = state.wifi.macAddress || 'unknown';
+            });
+          });
+        }
+      }
+    };
+
+    // ══════════════════════════════════════════════════════════
+    // 6. TERMINAL — override pwd/ls with real FS
+    // ══════════════════════════════════════════════════════════
+    // Terminal already works standalone; native FS commands can
+    // be extended later. For now, terminal uses its virtual FS.
+    // (Terminal is a sandboxed emulator, not a real shell.)
+
+    console.log('[KonturOS] Native bridge integration complete');
+  });
+})();
+</script>
+</body>
+</html>
